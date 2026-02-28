@@ -12,12 +12,22 @@ from urllib.error import HTTPError
 
 from .batcher import EventBatcher
 from .cache import PromptCache
-from .errors import PromptNotFoundError
+from .errors import PromptNotFoundError, PromptInjectionError, CostLimitError, ContentViolationError, ComplianceError
 from .template import interpolate
 from .types import LaunchPromptlyOptions, PromptOptions, RequestContext, WrapOptions
 from ._internal.cost import calculate_event_cost
 from ._internal.fingerprint import fingerprint_messages
-from ._internal.event_types import IngestEventPayload
+from ._internal.event_types import (
+    IngestEventPayload, PIIDetectionsPayload, InjectionRiskPayload,
+    CostGuardPayload, ContentViolationsPayload, CompliancePayload,
+)
+from ._internal.pii import detect_pii, merge_detections, PIIDetection, PIIDetectOptions
+from ._internal.redaction import redact_pii, de_redact, RedactionOptions
+from ._internal.injection import detect_injection, merge_injection_analyses, InjectionAnalysis, InjectionOptions
+from ._internal.cost_guard import CostGuard
+from ._internal.content_filter import detect_content_violations, has_blocking_violation, ContentViolation
+from ._internal.compliance import check_compliance, build_compliance_event_data, ComplianceContext
+from ._internal.streaming import SecurityStream
 
 _DEFAULT_ENDPOINT = "https://api.launchpromptly.dev"
 _DEFAULT_PROMPT_CACHE_TTL = 60.0  # seconds
@@ -248,6 +258,45 @@ class LaunchPromptly:
         return self._destroyed
 
 
+def _extract_tool_call_pii(result: Any, pii_opts: Any) -> list[PIIDetection]:
+    """Extract PII from tool_call arguments in the LLM response."""
+    detections: list[PIIDetection] = []
+    choices = getattr(result, "choices", None)
+    if choices is None and isinstance(result, dict):
+        choices = result.get("choices")
+    if not choices:
+        return detections
+
+    for choice in choices:
+        msg = getattr(choice, "message", None)
+        if msg is None and isinstance(choice, dict):
+            msg = choice.get("message")
+        if not msg:
+            continue
+
+        tool_calls = getattr(msg, "tool_calls", None)
+        if tool_calls is None and isinstance(msg, dict):
+            tool_calls = msg.get("tool_calls")
+        if not tool_calls:
+            continue
+
+        for tc in tool_calls:
+            func = getattr(tc, "function", None)
+            if func is None and isinstance(tc, dict):
+                func = tc.get("function")
+            if not func:
+                continue
+            args_str = getattr(func, "arguments", None)
+            if args_str is None and isinstance(func, dict):
+                args_str = func.get("arguments")
+            if args_str:
+                detect_opts = PIIDetectOptions(types=pii_opts.types) if pii_opts.types else None
+                dets = detect_pii(args_str, detect_opts)
+                detections.extend(dets)
+
+    return detections
+
+
 class _WrappedCompletions:
     """Proxy for client.chat.completions that intercepts create()."""
 
@@ -255,24 +304,285 @@ class _WrappedCompletions:
         self._original = original
         self._lp = lp
         self._opts = opts
+        # Initialize cost guard if configured
+        security = opts.security
+        self._cost_guard: Optional[CostGuard] = None
+        if security and security.cost_guard:
+            self._cost_guard = CostGuard(security.cost_guard)
 
     async def create(self, **kwargs: Any) -> Any:
+        security = self._opts.security
+        als_ctx = _lp_context.get()
+
+        # ── PRE-CALL SECURITY PIPELINE ──────────────────────────────
+        input_pii_detections: list[PIIDetection] = []
+        output_pii_detections: list[PIIDetection] = []
+        injection_result: Optional[InjectionAnalysis] = None
+        cost_violation = None
+        input_content_violations: list[ContentViolation] = []
+        output_content_violations: list[ContentViolation] = []
+        redaction_mapping: dict[str, str] = {}
+        redaction_applied = False
+
+        effective_kwargs = kwargs
+
+        if security:
+            # 1. Compliance check
+            if security.compliance:
+                comp_ctx = ComplianceContext(
+                    metadata=als_ctx.metadata if als_ctx else None,
+                    region=(als_ctx.metadata or {}).get("region") if als_ctx else None,
+                )
+                compliance_result = check_compliance(security.compliance, comp_ctx)
+                if not compliance_result.passed:
+                    should_block = False
+                    if security.compliance.consent_tracking and security.compliance.consent_tracking.require_consent:
+                        should_block = True
+                    if security.compliance.geofencing and security.compliance.geofencing.block_on_violation:
+                        should_block = True
+                    if should_block:
+                        raise ComplianceError(compliance_result.violations)
+
+            # 2. Cost guard pre-check
+            if self._cost_guard:
+                customer_id = als_ctx.customer_id if als_ctx else None
+                if not customer_id and self._opts.customer:
+                    try:
+                        ctx_result = self._opts.customer()
+                        if hasattr(ctx_result, "id"):
+                            customer_id = ctx_result.id
+                    except Exception:
+                        pass
+
+                cost_violation = self._cost_guard.check_pre_call(
+                    model=kwargs.get("model", "unknown"),
+                    max_tokens=kwargs.get("max_tokens"),
+                    customer_id=customer_id,
+                )
+                if cost_violation and self._cost_guard.should_block:
+                    if security.cost_guard and security.cost_guard.on_budget_exceeded:
+                        security.cost_guard.on_budget_exceeded(cost_violation)
+                    raise CostLimitError(cost_violation)
+
+            # 3. PII detection + redaction
+            pii_opts = security.pii
+            if pii_opts and pii_opts.enabled is not False:
+                messages = kwargs.get("messages", [])
+                all_text = "\n".join(m.get("content", "") for m in messages if m.get("content"))
+
+                # Scan tool definitions for PII in parameters
+                tools = kwargs.get("tools")
+                if tools:
+                    tool_texts: list[str] = []
+                    for tool in tools:
+                        func = tool.get("function", {}) if isinstance(tool, dict) else getattr(tool, "function", None)
+                        if func:
+                            params = func.get("parameters", {}) if isinstance(func, dict) else getattr(func, "parameters", {})
+                            if params:
+                                tool_texts.append(json.dumps(params))
+                    if tool_texts:
+                        all_text = all_text + "\n" + "\n".join(tool_texts)
+
+                input_pii_detections = detect_pii(all_text, PIIDetectOptions(types=pii_opts.types) if pii_opts.types else None)
+
+                # Merge with ML providers
+                if pii_opts.providers:
+                    provider_dets = []
+                    for p in pii_opts.providers:
+                        try:
+                            provider_dets.append(p.detect(all_text))
+                        except Exception:
+                            pass
+                    if provider_dets:
+                        input_pii_detections = merge_detections(input_pii_detections, *provider_dets)
+
+                if input_pii_detections and pii_opts.on_detect:
+                    pii_opts.on_detect(input_pii_detections)
+
+                redaction_strategy = pii_opts.redaction or "placeholder"
+                if input_pii_detections and redaction_strategy != "none":
+                    redaction_applied = True
+                    redacted_messages = []
+                    for msg in messages:
+                        result = redact_pii(
+                            msg.get("content", ""),
+                            RedactionOptions(
+                                strategy=redaction_strategy,
+                                types=pii_opts.types,
+                                providers=pii_opts.providers,
+                            ),
+                        )
+                        redaction_mapping.update(result.mapping)
+                        redacted_messages.append({**msg, "content": result.redacted_text})
+                    effective_kwargs = {**kwargs, "messages": redacted_messages}
+
+            # 4. Injection detection
+            inj_opts = security.injection
+            if inj_opts and inj_opts.enabled is not False:
+                messages = kwargs.get("messages", [])
+                user_text = "\n".join(
+                    m.get("content", "") for m in messages if m.get("role") == "user"
+                )
+                if user_text:
+                    inj_detect_opts = InjectionOptions(
+                        block_threshold=inj_opts.block_threshold or 0.7,
+                    )
+                    injection_result = detect_injection(user_text, inj_detect_opts)
+
+                    if inj_opts.providers:
+                        provider_results = []
+                        for p in inj_opts.providers:
+                            try:
+                                provider_results.append(p.detect(user_text))
+                            except Exception:
+                                provider_results.append(InjectionAnalysis(0, [], "allow"))
+                        injection_result = merge_injection_analyses(
+                            [injection_result] + provider_results,
+                            inj_detect_opts,
+                        )
+
+                    if inj_opts.on_detect:
+                        inj_opts.on_detect(injection_result)
+
+                    if inj_opts.block_on_high_risk and injection_result.action == "block":
+                        raise PromptInjectionError(injection_result)
+
+            # 5. Content filter
+            cf_opts = security.content_filter
+            if cf_opts and cf_opts.enabled is not False:
+                messages = kwargs.get("messages", [])
+                all_input = "\n".join(m.get("content", "") for m in messages)
+                input_content_violations = detect_content_violations(all_input, "input", cf_opts)
+
+                if has_blocking_violation(input_content_violations, cf_opts):
+                    if cf_opts.on_violation and input_content_violations:
+                        cf_opts.on_violation(input_content_violations[0])
+                    raise ContentViolationError(input_content_violations)
+
+                if input_content_violations and cf_opts.on_violation:
+                    for v in input_content_violations:
+                        cf_opts.on_violation(v)
+
+        # ── STREAMING SHORTCUT ─────────────────────────────────────
+        is_streaming = effective_kwargs.get("stream", False)
+        if is_streaming:
+            start = time.monotonic()
+            raw_stream = await self._original.create(**effective_kwargs)
+            pii_types = None
+            pii_providers = None
+            if security and security.pii and security.pii.enabled is not False:
+                pii_types = security.pii.types
+                pii_providers = security.pii.providers
+            wrapped_stream = SecurityStream(
+                raw_stream,
+                pii_types=pii_types,
+                providers=pii_providers,
+            )
+            return wrapped_stream
+
+        # ── CALL ORIGINAL API ───────────────────────────────────────
         start = time.monotonic()
-        result = await self._original.create(**kwargs)
+        result = await self._original.create(**effective_kwargs)
         latency_ms = (time.monotonic() - start) * 1000
 
-        # Fire-and-forget event capture
+        # ── POST-CALL SECURITY PIPELINE ─────────────────────────────
+        response_for_caller = result
+
+        if security:
+            # Extract response text
+            response_text = None
+            choices = getattr(result, "choices", None)
+            if choices is None and isinstance(result, dict):
+                choices = result.get("choices")
+            if choices and len(choices) > 0:
+                choice = choices[0]
+                msg = getattr(choice, "message", None)
+                if msg is None and isinstance(choice, dict):
+                    msg = choice.get("message")
+                if msg:
+                    response_text = getattr(msg, "content", None)
+                    if response_text is None and isinstance(msg, dict):
+                        response_text = msg.get("content")
+
+            # Post-call: scan response for PII
+            pii_opts = security.pii
+            if pii_opts and pii_opts.scan_response and response_text:
+                output_pii_detections = detect_pii(response_text, PIIDetectOptions(types=pii_opts.types) if pii_opts.types else None)
+
+            # Post-call: scan tool_calls in response for PII
+            if pii_opts and pii_opts.enabled is not False:
+                tool_call_pii = _extract_tool_call_pii(result, pii_opts)
+                if tool_call_pii:
+                    output_pii_detections = merge_detections(output_pii_detections, tool_call_pii)
+
+            # Post-call: scan response for content violations
+            cf_opts = security.content_filter
+            if cf_opts and cf_opts.enabled is not False and response_text:
+                output_content_violations = detect_content_violations(response_text, "output", cf_opts)
+
+            # Post-call: de-redact response
+            if redaction_mapping and response_text:
+                de_redacted = de_redact(response_text, redaction_mapping)
+                if de_redacted != response_text:
+                    # Build a modified result with de-redacted content
+                    if isinstance(result, dict):
+                        new_choices = list(result.get("choices", []))
+                        if new_choices:
+                            c = dict(new_choices[0])
+                            c["message"] = {**c.get("message", {}), "content": de_redacted}
+                            new_choices[0] = c
+                        response_for_caller = {**result, "choices": new_choices}
+                    else:
+                        # For object-style results, try to create a modified copy
+                        # This is best-effort; object results may not be easily clonable
+                        pass
+
+            # Post-call: update cost guard
+            if self._cost_guard:
+                usage = getattr(result, "usage", None)
+                if usage is None and isinstance(result, dict):
+                    usage = result.get("usage")
+                if usage:
+                    if isinstance(usage, dict):
+                        in_tok = usage.get("prompt_tokens", 0)
+                        out_tok = usage.get("completion_tokens", 0)
+                    else:
+                        in_tok = getattr(usage, "prompt_tokens", 0)
+                        out_tok = getattr(usage, "completion_tokens", 0)
+                    actual_cost = calculate_event_cost("openai", kwargs.get("model", "unknown"), in_tok, out_tok)
+                    customer_id = als_ctx.customer_id if als_ctx else None
+                    self._cost_guard.record_cost(actual_cost, customer_id)
+
+        # ── CAPTURE EVENT ───────────────────────────────────────────
         try:
-            self._capture_event(kwargs, result, latency_ms)
+            self._capture_event(
+                kwargs, result, latency_ms, security,
+                input_pii_detections, output_pii_detections,
+                injection_result, cost_violation,
+                input_content_violations, output_content_violations,
+                redaction_applied,
+            )
         except Exception:
             pass  # SDK must never throw
 
-        return result
+        return response_for_caller
 
-    def _capture_event(self, params: dict, result: Any, latency_ms: float) -> None:
+    def _capture_event(
+        self,
+        params: dict,
+        result: Any,
+        latency_ms: float,
+        security: Any = None,
+        input_pii: Optional[list] = None,
+        output_pii: Optional[list] = None,
+        injection: Optional[InjectionAnalysis] = None,
+        cost_violation: Any = None,
+        input_violations: Optional[list] = None,
+        output_violations: Optional[list] = None,
+        redaction_applied: bool = False,
+    ) -> None:
         usage = getattr(result, "usage", None)
         if usage is None:
-            # Try dict access for mock clients
             if isinstance(result, dict):
                 usage = result.get("usage")
             if usage is None:
@@ -300,7 +610,6 @@ class _WrappedCompletions:
             system_msg.get("content") if system_msg else None,
         )
 
-        # Resolve context: ALS > WrapOptions
         als_ctx = _lp_context.get()
 
         customer_id = (als_ctx.customer_id if als_ctx else None)
@@ -309,7 +618,7 @@ class _WrappedCompletions:
         if not customer_id and self._opts.customer:
             ctx_result = self._opts.customer()
             if asyncio.iscoroutine(ctx_result):
-                pass  # Can't await in sync context; skip
+                pass
             elif hasattr(ctx_result, "id"):
                 customer_id = ctx_result.id
                 feature = getattr(ctx_result, "feature", None) or feature
@@ -318,7 +627,6 @@ class _WrappedCompletions:
         span_name = (als_ctx.span_name if als_ctx else None) or self._opts.span_name
         metadata = als_ctx.metadata if als_ctx else None
 
-        # Check prompt linking
         prompt_meta = self._lp._resolved_prompts.get(
             system_msg.get("content", "") if system_msg else ""
         )
@@ -335,7 +643,8 @@ class _WrappedCompletions:
             feature=feature,
             system_hash=fingerprint.system_hash,
             full_hash=fingerprint.full_hash,
-            prompt_preview=fingerprint.prompt_preview,
+            # Strip promptPreview when security is enabled (PII safety)
+            prompt_preview=None if security else fingerprint.prompt_preview,
             status_code=200,
             managed_prompt_id=prompt_meta[0] if prompt_meta else None,
             prompt_version_id=prompt_meta[1] if prompt_meta else None,
@@ -343,6 +652,65 @@ class _WrappedCompletions:
             span_name=span_name,
             metadata=metadata,
         )
+
+        # Enrich with security metadata
+        if security:
+            input_pii = input_pii or []
+            output_pii = output_pii or []
+            input_violations = input_violations or []
+            output_violations = output_violations or []
+
+            has_ml_pii = bool(security.pii and security.pii.providers)
+            has_ml_inj = bool(security.injection and security.injection.providers)
+
+            if input_pii or output_pii:
+                event.pii_detections = PIIDetectionsPayload(
+                    input_count=len(input_pii),
+                    output_count=len(output_pii),
+                    types=list(set(d.type for d in input_pii + output_pii)),
+                    redaction_applied=redaction_applied,
+                    detector_used="both" if has_ml_pii else "regex",
+                )
+
+            if injection:
+                event.injection_risk = InjectionRiskPayload(
+                    score=injection.risk_score,
+                    triggered=injection.triggered,
+                    action=injection.action,
+                    detector_used="both" if has_ml_inj else "rules",
+                )
+
+            if input_violations or output_violations:
+                event.content_violations = ContentViolationsPayload(
+                    input_violations=[
+                        {"category": v.category, "matched": v.matched, "severity": v.severity}
+                        for v in input_violations
+                    ],
+                    output_violations=[
+                        {"category": v.category, "matched": v.matched, "severity": v.severity}
+                        for v in output_violations
+                    ],
+                )
+
+            if security.compliance:
+                comp_ctx = ComplianceContext(
+                    metadata=als_ctx.metadata if als_ctx else None,
+                    region=(als_ctx.metadata or {}).get("region") if als_ctx else None,
+                )
+                event.compliance = CompliancePayload(
+                    **vars(build_compliance_event_data(security.compliance, comp_ctx))
+                )
+
+            if self._cost_guard:
+                cg_opts = security.cost_guard
+                event.cost_guard = CostGuardPayload(
+                    estimated_cost=cost_usd,
+                    budget_remaining=max(
+                        0.0,
+                        (cg_opts.max_cost_per_hour or float("inf")) - self._cost_guard.get_current_hour_spend()
+                    ) if cg_opts else 0.0,
+                    limit_triggered=cost_violation.type if cost_violation else None,
+                )
 
         self._lp._batcher.enqueue(event)
 
