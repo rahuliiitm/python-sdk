@@ -15,8 +15,16 @@ _MODEL_PRICING: dict[str, dict[str, float]] = {
     # Anthropic Claude
     "claude-3-opus-20240229": {"input": 0.015, "output": 0.075},
     "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
+    "claude-sonnet-4-20250514": {"input": 0.003, "output": 0.015},
+    "claude-opus-4-20250514": {"input": 0.015, "output": 0.075},
     "claude-3-5-haiku-latest": {"input": 0.0008, "output": 0.004},
     "claude-3-haiku-20240307": {"input": 0.00025, "output": 0.00125},
+    # Google Gemini
+    "gemini-2.0-flash": {"input": 0.0001, "output": 0.0004},
+    "gemini-2.0-flash-lite": {"input": 0.000075, "output": 0.0003},
+    "gemini-1.5-pro": {"input": 0.00125, "output": 0.005},
+    "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
+    "gemini-1.5-flash-8b": {"input": 0.0000375, "output": 0.00015},
 }
 
 

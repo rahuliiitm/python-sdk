@@ -11,26 +11,25 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 from .batcher import EventBatcher
-from .cache import PromptCache
-from .errors import PromptNotFoundError, PromptInjectionError, CostLimitError, ContentViolationError, ComplianceError
-from .template import interpolate
-from .types import LaunchPromptlyOptions, PromptOptions, RequestContext, WrapOptions
+from .errors import PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError
+from ._internal.schema_validator import validate_output_schema
+from .types import LaunchPromptlyOptions, RequestContext, WrapOptions
 from ._internal.cost import calculate_event_cost
 from ._internal.fingerprint import fingerprint_messages
 from ._internal.event_types import (
     IngestEventPayload, PIIDetectionsPayload, InjectionRiskPayload,
-    CostGuardPayload, ContentViolationsPayload, CompliancePayload,
+    CostGuardPayload, ContentViolationsPayload,
 )
 from ._internal.pii import detect_pii, merge_detections, PIIDetection, PIIDetectOptions
 from ._internal.redaction import redact_pii, de_redact, RedactionOptions
 from ._internal.injection import detect_injection, merge_injection_analyses, InjectionAnalysis, InjectionOptions
 from ._internal.cost_guard import CostGuard
 from ._internal.content_filter import detect_content_violations, has_blocking_violation, ContentViolation
-from ._internal.compliance import check_compliance, build_compliance_event_data, ComplianceContext
-from ._internal.streaming import SecurityStream
+from ._internal.model_policy import check_model_policy
+from ._internal.streaming import SecurityStream, StreamGuardEngine, StreamSecurityReport
+from ._internal.event_types import StreamGuardEventPayload
 
 _DEFAULT_ENDPOINT = "https://api.launchpromptly.dev"
-_DEFAULT_PROMPT_CACHE_TTL = 60.0  # seconds
 
 _T = TypeVar("_T")
 
@@ -80,8 +79,7 @@ class LaunchPromptly:
         endpoint: str = _DEFAULT_ENDPOINT,
         flush_at: int = 10,
         flush_interval: float = 5.0,
-        prompt_cache_ttl: float = _DEFAULT_PROMPT_CACHE_TTL,
-        max_cache_size: int = 1000,
+        on: Optional[dict] = None,
     ) -> None:
         resolved_key = (
             api_key
@@ -101,13 +99,20 @@ class LaunchPromptly:
 
         self._api_key = resolved_key
         self._endpoint = endpoint
-        self._prompt_cache_ttl = prompt_cache_ttl
-        self._cache = PromptCache(max_cache_size)
+        self._event_handlers: dict = on or {}
         self._batcher = EventBatcher(resolved_key, endpoint, flush_at, flush_interval)
         self._destroyed = False
 
-        # Maps interpolated content → (managed_prompt_id, prompt_version_id)
-        self._resolved_prompts: dict[str, tuple[str, str]] = {}
+    def _emit(self, event_type: str, data: dict) -> None:
+        """Emit a guardrail event. Never throws."""
+        handler = self._event_handlers.get(event_type)
+        if not handler:
+            return
+        try:
+            from .types import GuardrailEvent
+            handler(GuardrailEvent(type=event_type, timestamp=time.time(), data=data))
+        except Exception:
+            pass  # Event handlers must never break the pipeline
 
     # ── Context propagation ────────────────────────────────────────────────────
 
@@ -128,7 +133,6 @@ class LaunchPromptly:
         Usage::
 
             with lp.context(trace_id="req-123", customer_id="user-42"):
-                prompt = await lp.prompt("greeting")
                 result = await wrapped.chat.completions.create(...)
         """
         ctx = RequestContext(
@@ -148,84 +152,7 @@ class LaunchPromptly:
         """Get the current context (or None if outside a context manager)."""
         return _lp_context.get()
 
-    # ── Prompt fetching ────────────────────────────────────────────────────────
-
-    async def prompt(
-        self,
-        slug: str,
-        *,
-        customer_id: Optional[str] = None,
-        variables: Optional[dict[str, str]] = None,
-    ) -> str:
-        """Fetch a managed prompt by slug.
-
-        Returns the interpolated content string.
-        """
-        als_ctx = _lp_context.get()
-        effective_customer_id = customer_id or (als_ctx.customer_id if als_ctx else None)
-
-        # Check cache first
-        cached = self._cache.get(slug)
-        if cached is not None:
-            content = interpolate(cached.content, variables) if variables else cached.content
-            self._resolved_prompts[content] = (
-                cached.managed_prompt_id,
-                cached.prompt_version_id,
-            )
-            return content
-
-        # Fetch from API
-        query = f"?customerId={effective_customer_id}" if effective_customer_id else ""
-        url = f"{self._endpoint}/v1/prompts/resolve/{slug}{query}"
-
-        try:
-            req = Request(
-                url,
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                method="GET",
-            )
-            response = urlopen(req, timeout=10)
-            data = json.loads(response.read().decode())
-
-            # Cache the raw template
-            self._cache.set(
-                slug,
-                content=data["content"],
-                managed_prompt_id=data["managedPromptId"],
-                prompt_version_id=data["promptVersionId"],
-                version=data["version"],
-                ttl=self._prompt_cache_ttl,
-            )
-
-            content = interpolate(data["content"], variables) if variables else data["content"]
-            self._resolved_prompts[content] = (
-                data["managedPromptId"],
-                data["promptVersionId"],
-            )
-            return content
-
-        except HTTPError as e:
-            if e.code == 404:
-                raise PromptNotFoundError(slug) from e
-            # On other HTTP errors, try stale cache
-            stale = self._cache.get_stale(slug)
-            if stale is not None:
-                content = interpolate(stale.content, variables) if variables else stale.content
-                return content
-            raise
-
-        except PromptNotFoundError:
-            raise
-
-        except Exception:
-            # On network error, try stale cache
-            stale = self._cache.get_stale(slug)
-            if stale is not None:
-                content = interpolate(stale.content, variables) if variables else stale.content
-                return content
-            raise
-
-    # ── OpenAI wrapping ────────────────────────────────────────────────────────
+    # ── Provider wrapping ────────────────────────────────────────────────────
 
     def wrap(self, client: Any, options: Optional[WrapOptions] = None) -> Any:
         """Wrap an OpenAI client to automatically capture LLM events.
@@ -234,6 +161,54 @@ class LaunchPromptly:
         """
         opts = options or WrapOptions()
         return _WrappedClient(client, self, opts)
+
+    def wrap_anthropic(self, client: Any, options: Optional[WrapOptions] = None) -> Any:
+        """Wrap an Anthropic client with security pipeline interception.
+
+        Intercepts ``client.messages.create()`` to run PII redaction, injection
+        detection, cost controls, and content filtering.
+
+        Usage::
+
+            from anthropic import AsyncAnthropic
+
+            client = AsyncAnthropic(api_key="...")
+            wrapped = lp.wrap_anthropic(client, WrapOptions(
+                security=SecurityOptions(pii=PIISecurityOptions(redaction="placeholder")),
+            ))
+            result = await wrapped.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": "Hello"}],
+            )
+        """
+        from .providers.anthropic import wrap_anthropic_client
+        opts = options or WrapOptions()
+        return wrap_anthropic_client(client, self, opts)
+
+    def wrap_gemini(self, client: Any, options: Optional[WrapOptions] = None) -> Any:
+        """Wrap a Google Gemini client with security pipeline interception.
+
+        Intercepts ``client.models.generate_content()`` and
+        ``client.models.generate_content_stream()`` to run PII redaction,
+        injection detection, cost controls, and content filtering.
+
+        Usage::
+
+            from google import genai
+
+            client = genai.Client(api_key="...")
+            wrapped = lp.wrap_gemini(client, WrapOptions(
+                security=SecurityOptions(pii=PIISecurityOptions(redaction="placeholder")),
+            ))
+            result = await wrapped.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+            )
+        """
+        from .providers.gemini import wrap_gemini_client
+        opts = options or WrapOptions()
+        return wrap_gemini_client(client, self, opts)
 
     # ── Flush / Destroy / Shutdown ─────────────────────────────────────────────
 
@@ -327,23 +302,16 @@ class _WrappedCompletions:
         effective_kwargs = kwargs
 
         if security:
-            # 1. Compliance check
-            if security.compliance:
-                comp_ctx = ComplianceContext(
-                    metadata=als_ctx.metadata if als_ctx else None,
-                    region=(als_ctx.metadata or {}).get("region") if als_ctx else None,
-                )
-                compliance_result = check_compliance(security.compliance, comp_ctx)
-                if not compliance_result.passed:
-                    should_block = False
-                    if security.compliance.consent_tracking and security.compliance.consent_tracking.require_consent:
-                        should_block = True
-                    if security.compliance.geofencing and security.compliance.geofencing.block_on_violation:
-                        should_block = True
-                    if should_block:
-                        raise ComplianceError(compliance_result.violations)
+            # 0. Model policy enforcement (first check)
+            if security.model_policy:
+                violation = check_model_policy(kwargs, security.model_policy)
+                if violation:
+                    self._lp._emit("model.blocked", {"violation": violation})
+                    if security.model_policy.on_violation:
+                        security.model_policy.on_violation(violation)
+                    raise ModelPolicyError(violation)
 
-            # 2. Cost guard pre-check
+            # 1. Cost guard pre-check
             if self._cost_guard:
                 customer_id = als_ctx.customer_id if als_ctx else None
                 if not customer_id and self._opts.customer:
@@ -360,11 +328,12 @@ class _WrappedCompletions:
                     customer_id=customer_id,
                 )
                 if cost_violation and self._cost_guard.should_block:
+                    self._lp._emit("cost.exceeded", {"violation": cost_violation})
                     if security.cost_guard and security.cost_guard.on_budget_exceeded:
                         security.cost_guard.on_budget_exceeded(cost_violation)
                     raise CostLimitError(cost_violation)
 
-            # 3. PII detection + redaction
+            # 2. PII detection + redaction
             pii_opts = security.pii
             if pii_opts and pii_opts.enabled is not False:
                 messages = kwargs.get("messages", [])
@@ -396,8 +365,10 @@ class _WrappedCompletions:
                     if provider_dets:
                         input_pii_detections = merge_detections(input_pii_detections, *provider_dets)
 
-                if input_pii_detections and pii_opts.on_detect:
-                    pii_opts.on_detect(input_pii_detections)
+                if input_pii_detections:
+                    self._lp._emit("pii.detected", {"detections": input_pii_detections, "direction": "input"})
+                    if pii_opts.on_detect:
+                        pii_opts.on_detect(input_pii_detections)
 
                 redaction_strategy = pii_opts.redaction or "placeholder"
                 if input_pii_detections and redaction_strategy != "none":
@@ -415,13 +386,15 @@ class _WrappedCompletions:
                         redaction_mapping.update(result.mapping)
                         redacted_messages.append({**msg, "content": result.redacted_text})
                     effective_kwargs = {**kwargs, "messages": redacted_messages}
+                    self._lp._emit("pii.redacted", {"strategy": redaction_strategy, "count": len(input_pii_detections)})
 
-            # 4. Injection detection
+            # 3. Injection detection
             inj_opts = security.injection
             if inj_opts and inj_opts.enabled is not False:
                 messages = kwargs.get("messages", [])
+                # Scan user messages AND tool/function results (untrusted external input)
                 user_text = "\n".join(
-                    m.get("content", "") for m in messages if m.get("role") == "user"
+                    m.get("content", "") for m in messages if m.get("role") in ("user", "tool", "function")
                 )
                 if user_text:
                     inj_detect_opts = InjectionOptions(
@@ -441,18 +414,24 @@ class _WrappedCompletions:
                             inj_detect_opts,
                         )
 
+                    if injection_result.risk_score > 0:
+                        self._lp._emit("injection.detected", {"analysis": injection_result})
                     if inj_opts.on_detect:
                         inj_opts.on_detect(injection_result)
 
                     if inj_opts.block_on_high_risk and injection_result.action == "block":
+                        self._lp._emit("injection.blocked", {"analysis": injection_result})
                         raise PromptInjectionError(injection_result)
 
-            # 5. Content filter
+            # 4. Content filter
             cf_opts = security.content_filter
             if cf_opts and cf_opts.enabled is not False:
                 messages = kwargs.get("messages", [])
                 all_input = "\n".join(m.get("content", "") for m in messages)
                 input_content_violations = detect_content_violations(all_input, "input", cf_opts)
+
+                if input_content_violations:
+                    self._lp._emit("content.violated", {"violations": input_content_violations, "direction": "input"})
 
                 if has_blocking_violation(input_content_violations, cf_opts):
                     if cf_opts.on_violation and input_content_violations:
@@ -468,6 +447,23 @@ class _WrappedCompletions:
         if is_streaming:
             start = time.monotonic()
             raw_stream = await self._original.create(**effective_kwargs)
+
+            # Use StreamGuardEngine if stream_guard is configured
+            if security and security.stream_guard:
+                from ._internal.streaming import _extract_openai_chunk_text
+                engine = StreamGuardEngine(
+                    stream_guard=security.stream_guard,
+                    pii_types=security.pii.types if security.pii else None,
+                    pii_providers=security.pii.providers if security.pii else None,
+                    injection_block_threshold=(
+                        security.injection.block_threshold
+                        if security.injection else None
+                    ),
+                    extract_text=_extract_openai_chunk_text,
+                )
+                return engine.wrap(raw_stream)
+
+            # Legacy: SecurityStream for post-hoc scanning
             pii_types = None
             pii_providers = None
             if security and security.pii and security.pii.enabled is not False:
@@ -515,10 +511,23 @@ class _WrappedCompletions:
                 if tool_call_pii:
                     output_pii_detections = merge_detections(output_pii_detections, tool_call_pii)
 
+            if output_pii_detections:
+                self._lp._emit("pii.detected", {"detections": output_pii_detections, "direction": "output"})
+
             # Post-call: scan response for content violations
             cf_opts = security.content_filter
             if cf_opts and cf_opts.enabled is not False and response_text:
                 output_content_violations = detect_content_violations(response_text, "output", cf_opts)
+                if output_content_violations:
+                    self._lp._emit("content.violated", {"violations": output_content_violations, "direction": "output"})
+
+            # Post-call: output schema validation
+            if security.output_schema and response_text:
+                validation = validate_output_schema(response_text, security.output_schema)
+                if not validation.valid:
+                    self._lp._emit("schema.invalid", {"errors": validation.errors, "response_text": response_text})
+                    if security.output_schema.block_on_invalid:
+                        raise OutputSchemaError(validation.errors, response_text)
 
             # Post-call: de-redact response
             if redaction_mapping and response_text:
@@ -627,10 +636,6 @@ class _WrappedCompletions:
         span_name = (als_ctx.span_name if als_ctx else None) or self._opts.span_name
         metadata = als_ctx.metadata if als_ctx else None
 
-        prompt_meta = self._lp._resolved_prompts.get(
-            system_msg.get("content", "") if system_msg else ""
-        )
-
         event = IngestEventPayload(
             provider="openai",
             model=model,
@@ -646,8 +651,6 @@ class _WrappedCompletions:
             # Strip promptPreview when security is enabled (PII safety)
             prompt_preview=None if security else fingerprint.prompt_preview,
             status_code=200,
-            managed_prompt_id=prompt_meta[0] if prompt_meta else None,
-            prompt_version_id=prompt_meta[1] if prompt_meta else None,
             trace_id=trace_id,
             span_name=span_name,
             metadata=metadata,
@@ -690,15 +693,6 @@ class _WrappedCompletions:
                         {"category": v.category, "matched": v.matched, "severity": v.severity}
                         for v in output_violations
                     ],
-                )
-
-            if security.compliance:
-                comp_ctx = ComplianceContext(
-                    metadata=als_ctx.metadata if als_ctx else None,
-                    region=(als_ctx.metadata or {}).get("region") if als_ctx else None,
-                )
-                event.compliance = CompliancePayload(
-                    **vars(build_compliance_event_data(security.compliance, comp_ctx))
                 )
 
             if self._cost_guard:

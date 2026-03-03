@@ -2,13 +2,13 @@
 
 from .client import LaunchPromptly
 from .errors import (
-    PromptNotFoundError,
     PromptInjectionError,
     CostLimitError,
     ContentViolationError,
-    ComplianceError,
+    ModelPolicyError,
+    OutputSchemaError,
+    StreamAbortError,
 )
-from .template import extract_variables, interpolate
 from .types import (
     CustomerContext,
     LaunchPromptlyOptions,
@@ -16,9 +16,13 @@ from .types import (
     InjectionSecurityOptions,
     AuditOptions,
     SecurityOptions,
-    PromptOptions,
     RequestContext,
     WrapOptions,
+    StreamGuardOptions,
+    MaxResponseLength,
+    StreamViolation,
+    GuardrailEvent,
+    GuardrailEventHandlers,
 )
 
 # Security modules — public API
@@ -50,6 +54,14 @@ from ._internal.injection import (
     InjectionDetectorProvider,
 )
 from ._internal.cost_guard import CostGuard, CostGuardOptions, BudgetViolation
+from ._internal.model_policy import check_model_policy, ModelPolicyOptions, ModelPolicyViolation
+from ._internal.schema_validator import (
+    validate_schema,
+    validate_output_schema,
+    OutputSchemaOptions,
+    SchemaValidationError,
+    OutputValidationResult,
+)
 from ._internal.content_filter import (
     detect_content_violations,
     has_blocking_violation,
@@ -61,24 +73,30 @@ from ._internal.content_filter import (
     ContentFilterProvider,
 )
 from ._internal.streaming import SecurityStream, StreamSecurityReport
-from ._internal.compliance import (
-    check_compliance,
-    build_compliance_event_data,
-    ComplianceOptions,
-    ComplianceCheckResult,
-    ComplianceViolation,
-    ComplianceEventData,
+
+# Provider adapters
+from .providers.anthropic import (
+    wrap_anthropic_client,
+    extract_anthropic_message_texts,
+    extract_anthropic_response_text,
+    extract_anthropic_tool_calls,
+    extract_anthropic_stream_chunk,
+    extract_content_block_text,
+)
+from .providers.gemini import (
+    wrap_gemini_client,
+    extract_gemini_message_texts,
+    extract_gemini_response_text,
+    extract_gemini_function_calls,
+    extract_gemini_stream_chunk,
+    extract_gemini_content_text,
 )
 
 __all__ = [
     # Core
     "LaunchPromptly",
-    "PromptNotFoundError",
-    "extract_variables",
-    "interpolate",
     "CustomerContext",
     "LaunchPromptlyOptions",
-    "PromptOptions",
     "RequestContext",
     "WrapOptions",
     # Security types
@@ -86,11 +104,18 @@ __all__ = [
     "InjectionSecurityOptions",
     "AuditOptions",
     "SecurityOptions",
+    "StreamGuardOptions",
+    "MaxResponseLength",
+    "StreamViolation",
+    "GuardrailEvent",
+    "GuardrailEventHandlers",
     # Security errors
     "PromptInjectionError",
     "CostLimitError",
     "ContentViolationError",
-    "ComplianceError",
+    "ModelPolicyError",
+    "OutputSchemaError",
+    "StreamAbortError",
     # PII
     "detect_pii",
     "merge_detections",
@@ -119,6 +144,16 @@ __all__ = [
     "CostGuard",
     "CostGuardOptions",
     "BudgetViolation",
+    # Model policy
+    "check_model_policy",
+    "ModelPolicyOptions",
+    "ModelPolicyViolation",
+    # Schema validator
+    "validate_schema",
+    "validate_output_schema",
+    "OutputSchemaOptions",
+    "SchemaValidationError",
+    "OutputValidationResult",
     # Content filter
     "detect_content_violations",
     "has_blocking_violation",
@@ -131,13 +166,19 @@ __all__ = [
     # Streaming
     "SecurityStream",
     "StreamSecurityReport",
-    # Compliance
-    "check_compliance",
-    "build_compliance_event_data",
-    "ComplianceOptions",
-    "ComplianceCheckResult",
-    "ComplianceViolation",
-    "ComplianceEventData",
+    # Provider adapters
+    "wrap_anthropic_client",
+    "extract_anthropic_message_texts",
+    "extract_anthropic_response_text",
+    "extract_anthropic_tool_calls",
+    "extract_anthropic_stream_chunk",
+    "extract_content_block_text",
+    "wrap_gemini_client",
+    "extract_gemini_message_texts",
+    "extract_gemini_response_text",
+    "extract_gemini_function_calls",
+    "extract_gemini_stream_chunk",
+    "extract_gemini_content_text",
 ]
 
 __version__ = "0.1.0"

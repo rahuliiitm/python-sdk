@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
 
-from launchpromptly import LaunchPromptly, PromptNotFoundError
+from launchpromptly import LaunchPromptly
 
 
 @pytest.fixture(autouse=True)

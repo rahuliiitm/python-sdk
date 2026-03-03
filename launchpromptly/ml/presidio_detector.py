@@ -44,6 +44,44 @@ _CORE_SUPPORTED_TYPES = [
 ]
 
 
+def _build_analyzer(model_name: str) -> "AnalyzerEngine":  # type: ignore[name-defined]  # noqa: F821
+    """Build a Presidio AnalyzerEngine with ORGANIZATION entity support.
+
+    By default Presidio's SpacyRecognizer only maps PERSON, LOCATION,
+    DATE_TIME, and NRP from spaCy NER.  We configure a custom
+    NerModelConfiguration to also map spaCy's ORG label to a Presidio
+    ORGANIZATION entity so that company/org names are detected.
+    """
+    from presidio_analyzer import AnalyzerEngine  # type: ignore[import-untyped]
+    from presidio_analyzer.nlp_engine import NlpEngineProvider  # type: ignore[import-untyped]
+
+    configuration = {
+        "nlp_engine_name": "spacy",
+        "models": [{"lang_code": "en", "model_name": model_name}],
+        "ner_model_configuration": {
+            "model_to_presidio_entity_mapping": {
+                "PER": "PERSON",
+                "PERSON": "PERSON",
+                "LOC": "LOCATION",
+                "GPE": "LOCATION",
+                "ORG": "ORGANIZATION",
+                "DATE": "DATE_TIME",
+                "NORP": "NRP",
+            },
+            "low_confidence_score_multiplier": 0.4,
+            "low_score_entity_names": [],
+            "labels_to_ignore": [
+                "CARDINAL", "EVENT", "LANGUAGE", "LAW", "MONEY",
+                "ORDINAL", "PERCENT", "PRODUCT", "QUANTITY",
+                "TIME", "WORK_OF_ART", "FAC",
+            ],
+        },
+    }
+
+    provider = NlpEngineProvider(nlp_configuration=configuration)
+    return AnalyzerEngine(nlp_engine=provider.create_engine())
+
+
 class PresidioPIIDetector:
     """ML-based PII detector using Microsoft Presidio + spaCy NER.
 
@@ -60,7 +98,7 @@ class PresidioPIIDetector:
 
     def __init__(self, model_name: str = "en_core_web_sm") -> None:
         try:
-            from presidio_analyzer import AnalyzerEngine  # type: ignore[import-untyped]
+            from presidio_analyzer import AnalyzerEngine  # type: ignore[import-untyped]  # noqa: F401
         except ImportError:
             raise ImportError(
                 "PresidioPIIDetector requires presidio-analyzer. "
@@ -68,7 +106,7 @@ class PresidioPIIDetector:
             )
 
         self._model_name = model_name
-        self._analyzer = AnalyzerEngine()
+        self._analyzer = _build_analyzer(model_name)
         # Store the entity types we ask Presidio to look for.
         self._presidio_entities = list(_PRESIDIO_TO_PII_TYPE.keys())
 

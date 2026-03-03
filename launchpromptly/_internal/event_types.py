@@ -35,10 +35,12 @@ class ContentViolationsPayload:
 
 
 @dataclass
-class CompliancePayload:
-    consent_recorded: bool
-    data_region: Optional[str] = None
-    retention_days: Optional[int] = None
+class StreamGuardEventPayload:
+    aborted: bool
+    violation_count: int
+    violation_types: List[str]
+    approximate_output_tokens: int
+    response_length: int
 
 
 @dataclass
@@ -58,8 +60,6 @@ class IngestEventPayload:
     full_hash: Optional[str] = None
     prompt_preview: Optional[str] = None
     status_code: Optional[int] = None
-    managed_prompt_id: Optional[str] = None
-    prompt_version_id: Optional[str] = None
     trace_id: Optional[str] = None
     span_name: Optional[str] = None
     environment_id: Optional[str] = None
@@ -70,7 +70,7 @@ class IngestEventPayload:
     injection_risk: Optional[InjectionRiskPayload] = None
     cost_guard: Optional[CostGuardPayload] = None
     content_violations: Optional[ContentViolationsPayload] = None
-    compliance: Optional[CompliancePayload] = None
+    stream_guard: Optional[StreamGuardEventPayload] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to a JSON-serialisable dict, omitting None values."""
@@ -95,10 +95,6 @@ class IngestEventPayload:
             d["promptPreview"] = self.prompt_preview
         if self.status_code is not None:
             d["statusCode"] = self.status_code
-        if self.managed_prompt_id is not None:
-            d["managedPromptId"] = self.managed_prompt_id
-        if self.prompt_version_id is not None:
-            d["promptVersionId"] = self.prompt_version_id
         if self.trace_id is not None:
             d["traceId"] = self.trace_id
         if self.span_name is not None:
@@ -137,14 +133,13 @@ class IngestEventPayload:
                 "inputViolations": self.content_violations.input_violations,
                 "outputViolations": self.content_violations.output_violations,
             }
-        if self.compliance is not None:
-            comp: Dict[str, Any] = {
-                "consentRecorded": self.compliance.consent_recorded,
+        if self.stream_guard is not None:
+            d["streamGuard"] = {
+                "aborted": self.stream_guard.aborted,
+                "violationCount": self.stream_guard.violation_count,
+                "violationTypes": self.stream_guard.violation_types,
+                "approximateOutputTokens": self.stream_guard.approximate_output_tokens,
+                "responseLength": self.stream_guard.response_length,
             }
-            if self.compliance.data_region is not None:
-                comp["dataRegion"] = self.compliance.data_region
-            if self.compliance.retention_days is not None:
-                comp["retentionDays"] = self.compliance.retention_days
-            d["compliance"] = comp
 
         return d

@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional
 
 if TYPE_CHECKING:
-    from ._internal.compliance import ComplianceOptions
     from ._internal.content_filter import ContentFilterOptions
     from ._internal.cost_guard import CostGuardOptions
     from ._internal.injection import InjectionAnalysis, InjectionDetectorProvider
+    from ._internal.model_policy import ModelPolicyOptions
     from ._internal.pii import PIIDetection, PIIDetectorProvider, PIIType
     from ._internal.redaction import RedactionStrategy
+    from ._internal.schema_validator import OutputSchemaOptions
 
 
 @dataclass
@@ -33,14 +34,7 @@ class LaunchPromptlyOptions:
     endpoint: str = "https://api.launchpromptly.dev"
     flush_at: int = 10
     flush_interval: float = 5.0  # seconds
-    prompt_cache_ttl: float = 60.0  # seconds
-    max_cache_size: int = 1000
-
-
-@dataclass
-class PromptOptions:
-    customer_id: Optional[str] = None
-    variables: Optional[Dict[str, str]] = None
+    on: Optional[GuardrailEventHandlers] = None  # guardrail event handlers
 
 
 @dataclass
@@ -68,6 +62,39 @@ class AuditOptions:
 
 
 @dataclass
+class MaxResponseLength:
+    """Response length limits for streaming guard."""
+
+    max_chars: Optional[int] = None
+    max_words: Optional[int] = None
+
+
+@dataclass
+class StreamViolation:
+    """A violation detected during streaming."""
+
+    type: Literal["pii", "injection", "length"]
+    offset: int
+    details: Any
+    timestamp: float
+
+
+@dataclass
+class StreamGuardOptions:
+    """Configuration for real-time streaming guard."""
+
+    pii_scan: Optional[bool] = None
+    injection_scan: Optional[bool] = None
+    max_response_length: Optional[MaxResponseLength] = None
+    scan_interval: int = 500
+    window_overlap: int = 200
+    on_violation: Literal["abort", "warn", "flag"] = "flag"
+    on_stream_violation: Optional[Callable[[StreamViolation], None]] = None
+    final_scan: bool = True
+    track_tokens: bool = True
+
+
+@dataclass
 class SecurityOptions:
     """Security configuration for the wrap() pipeline."""
 
@@ -75,8 +102,38 @@ class SecurityOptions:
     injection: Optional[InjectionSecurityOptions] = None
     cost_guard: Optional[CostGuardOptions] = None
     content_filter: Optional[ContentFilterOptions] = None
-    compliance: Optional[ComplianceOptions] = None
+    model_policy: Optional[ModelPolicyOptions] = None
+    stream_guard: Optional[StreamGuardOptions] = None
+    output_schema: Optional[OutputSchemaOptions] = None
     audit: Optional[AuditOptions] = None
+
+
+# ── Guardrail Events ──────────────────────────────────────────────────────────
+
+#: All guardrail event types emitted by the SDK.
+GuardrailEventType = Literal[
+    "pii.detected",
+    "pii.redacted",
+    "injection.detected",
+    "injection.blocked",
+    "cost.exceeded",
+    "content.violated",
+    "schema.invalid",
+    "model.blocked",
+]
+
+
+@dataclass
+class GuardrailEvent:
+    """Payload emitted when a guardrail event fires."""
+
+    type: GuardrailEventType
+    timestamp: float
+    data: Dict[str, Any]
+
+
+#: Map of event type → handler callback.
+GuardrailEventHandlers = Dict[str, Callable[[GuardrailEvent], None]]
 
 
 @dataclass

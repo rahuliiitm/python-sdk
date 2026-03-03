@@ -3,18 +3,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
-    from ._internal.compliance import ComplianceViolation
     from ._internal.content_filter import ContentViolation
     from ._internal.cost_guard import BudgetViolation
     from ._internal.injection import InjectionAnalysis
-
-
-class PromptNotFoundError(Exception):
-    """Raised when a prompt slug does not exist (404)."""
-
-    def __init__(self, slug: str) -> None:
-        self.slug = slug
-        super().__init__(f'Prompt "{slug}" not found')
+    from ._internal.model_policy import ModelPolicyViolation
+    from ._internal.schema_validator import SchemaValidationError
+    from .types import StreamViolation
 
 
 class PromptInjectionError(Exception):
@@ -48,10 +42,35 @@ class ContentViolationError(Exception):
         super().__init__(f"Content policy violation: {categories}")
 
 
-class ComplianceError(Exception):
-    """Raised when compliance checks fail."""
+class ModelPolicyError(Exception):
+    """Raised when a model policy violation is detected."""
 
-    def __init__(self, violations: List[ComplianceViolation]) -> None:
-        self.violations = violations
-        messages = "; ".join(v.message for v in violations)
-        super().__init__(f"Compliance check failed: {messages}")
+    def __init__(self, violation: ModelPolicyViolation) -> None:
+        self.violation = violation
+        super().__init__(f"Model policy violation: {violation.message}")
+
+
+class OutputSchemaError(Exception):
+    """Raised when the LLM response fails output schema validation."""
+
+    def __init__(
+        self,
+        validation_errors: List[SchemaValidationError],
+        response_text: str,
+    ) -> None:
+        self.validation_errors = validation_errors
+        self.response_text = response_text
+        summary = "; ".join(e.message for e in validation_errors[:3])
+        super().__init__(f"Output schema validation failed: {summary}")
+
+
+class StreamAbortError(Exception):
+    """Raised when a streaming response is aborted due to a mid-stream violation."""
+
+    def __init__(self, violation: StreamViolation, partial_response: str) -> None:
+        self.violation = violation
+        self.partial_response = partial_response
+        self.approximate_tokens = len(partial_response) // 4
+        super().__init__(
+            f"Stream aborted: {violation.type} violation detected at offset {violation.offset}"
+        )

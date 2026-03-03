@@ -34,6 +34,20 @@ def _make_fake_analyzer(results: List[_FakePresidioResult]) -> MagicMock:
     return engine
 
 
+def _make_presidio_mocks():
+    """Return (fake_module, fake_nlp_module) that mock presidio_analyzer
+    and presidio_analyzer.nlp_engine for the _build_analyzer function."""
+    fake_module = MagicMock()
+    fake_nlp_module = MagicMock()
+    # NlpEngineProvider(...).create_engine() needs to return a mock
+    fake_provider_instance = MagicMock()
+    fake_provider_instance.create_engine.return_value = MagicMock()
+    fake_nlp_module.NlpEngineProvider.return_value = fake_provider_instance
+    fake_module.nlp_engine = fake_nlp_module
+    fake_module.AnalyzerEngine.return_value = MagicMock()
+    return fake_module, fake_nlp_module
+
+
 # ---------------------------------------------------------------------------
 # Initialization
 # ---------------------------------------------------------------------------
@@ -55,10 +69,12 @@ class TestPresidioPIIDetectorInit:
 
     def test_successful_init_with_mocked_presidio(self):
         """When presidio_analyzer is importable, construction succeeds."""
-        fake_module = MagicMock()
-        fake_module.AnalyzerEngine.return_value = MagicMock()
+        fake_module, fake_nlp_module = _make_presidio_mocks()
 
-        with patch.dict("sys.modules", {"presidio_analyzer": fake_module}):
+        with patch.dict("sys.modules", {
+            "presidio_analyzer": fake_module,
+            "presidio_analyzer.nlp_engine": fake_nlp_module,
+        }):
             import importlib
             import launchpromptly.ml.presidio_detector as mod
 
@@ -67,10 +83,12 @@ class TestPresidioPIIDetectorInit:
             assert detector is not None
 
     def test_custom_model_name_stored(self):
-        fake_module = MagicMock()
-        fake_module.AnalyzerEngine.return_value = MagicMock()
+        fake_module, fake_nlp_module = _make_presidio_mocks()
 
-        with patch.dict("sys.modules", {"presidio_analyzer": fake_module}):
+        with patch.dict("sys.modules", {
+            "presidio_analyzer": fake_module,
+            "presidio_analyzer.nlp_engine": fake_nlp_module,
+        }):
             import importlib
             import launchpromptly.ml.presidio_detector as mod
 
@@ -87,10 +105,12 @@ class TestPresidioPIIDetectorProperties:
 
     @pytest.fixture()
     def detector(self):
-        fake_module = MagicMock()
-        fake_module.AnalyzerEngine.return_value = MagicMock()
+        fake_module, fake_nlp_module = _make_presidio_mocks()
 
-        with patch.dict("sys.modules", {"presidio_analyzer": fake_module}):
+        with patch.dict("sys.modules", {
+            "presidio_analyzer": fake_module,
+            "presidio_analyzer.nlp_engine": fake_nlp_module,
+        }):
             import importlib
             import launchpromptly.ml.presidio_detector as mod
 
@@ -122,11 +142,14 @@ class TestPresidioPIIDetectorDetect:
 
     def _build_detector(self, fake_results):
         """Build a detector with a mocked analyzer that returns *fake_results*."""
-        fake_module = MagicMock()
+        fake_module, fake_nlp_module = _make_presidio_mocks()
         engine = _make_fake_analyzer(fake_results)
         fake_module.AnalyzerEngine.return_value = engine
 
-        with patch.dict("sys.modules", {"presidio_analyzer": fake_module}):
+        with patch.dict("sys.modules", {
+            "presidio_analyzer": fake_module,
+            "presidio_analyzer.nlp_engine": fake_nlp_module,
+        }):
             import importlib
             import launchpromptly.ml.presidio_detector as mod
 

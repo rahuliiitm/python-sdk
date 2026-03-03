@@ -13,7 +13,9 @@ BudgetViolationType = Literal[
     "per_request",
     "per_minute",
     "per_hour",
+    "per_day",
     "per_customer",
+    "per_customer_daily",
     "max_tokens",
 ]
 
@@ -23,7 +25,9 @@ class CostGuardOptions:
     max_cost_per_request: Optional[float] = None
     max_cost_per_minute: Optional[float] = None
     max_cost_per_hour: Optional[float] = None
+    max_cost_per_day: Optional[float] = None
     max_cost_per_customer: Optional[float] = None
+    max_cost_per_customer_per_day: Optional[float] = None
     max_tokens_per_request: Optional[int] = None
     on_budget_exceeded: Optional[Callable[[BudgetViolation], None]] = None
     block_on_exceed: bool = True
@@ -119,6 +123,17 @@ class CostGuard:
                     customer_id=customer_id,
                 )
 
+        # Check per-day spend (24h rolling window)
+        if self._options.max_cost_per_day is not None:
+            day_spend = self.get_spend_in_window(now - 86_400_000, now)
+            if day_spend >= self._options.max_cost_per_day:
+                return BudgetViolation(
+                    type="per_day",
+                    current_spend=day_spend,
+                    limit=self._options.max_cost_per_day,
+                    customer_id=customer_id,
+                )
+
         # Check per-customer spend (per hour)
         if self._options.max_cost_per_customer is not None and customer_id is not None:
             customer_spend = self.get_spend_in_window(
@@ -131,6 +146,21 @@ class CostGuard:
                     type="per_customer",
                     current_spend=customer_spend,
                     limit=self._options.max_cost_per_customer,
+                    customer_id=customer_id,
+                )
+
+        # Check per-customer daily spend (24h rolling window)
+        if self._options.max_cost_per_customer_per_day is not None and customer_id is not None:
+            customer_day_spend = self.get_spend_in_window(
+                now - 86_400_000,
+                now,
+                customer_id=customer_id,
+            )
+            if customer_day_spend >= self._options.max_cost_per_customer_per_day:
+                return BudgetViolation(
+                    type="per_customer_daily",
+                    current_spend=customer_day_spend,
+                    limit=self._options.max_cost_per_customer_per_day,
                     customer_id=customer_id,
                 )
 
@@ -175,6 +205,11 @@ class CostGuard:
         now = time.time() * 1000
         return self.get_spend_in_window(now - 3_600_000, now)
 
+    def get_current_day_spend(self) -> float:
+        """Get current day spend (24h rolling window)."""
+        now = time.time() * 1000
+        return self.get_spend_in_window(now - 86_400_000, now)
+
     @property
     def should_block(self) -> bool:
         """Whether to block on budget exceeded."""
@@ -186,6 +221,6 @@ class CostGuard:
         return self._options
 
     def _prune_old_entries(self) -> None:
-        cutoff = time.time() * 1000 - 3_600_000  # 1 hour
+        cutoff = time.time() * 1000 - 86_400_000  # 24 hours
         while self._entries and self._entries[0].timestamp_ms < cutoff:
             self._entries.pop(0)
