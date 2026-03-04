@@ -29,7 +29,7 @@ from ._internal.model_policy import check_model_policy
 from ._internal.streaming import SecurityStream, StreamGuardEngine, StreamSecurityReport
 from ._internal.event_types import StreamGuardEventPayload
 
-_DEFAULT_ENDPOINT = "https://api.launchpromptly.dev"
+_DEFAULT_ENDPOINT = "https://launchpromptly-api-950530830180.us-west1.run.app"
 
 _T = TypeVar("_T")
 

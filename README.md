@@ -79,7 +79,7 @@ On every LLM call, the SDK runs these checks in order:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `api_key` | `LAUNCHPROMPTLY_API_KEY` env | Your LaunchPromptly API key |
-| `endpoint` | `https://api.launchpromptly.dev` | API base URL |
+| `endpoint` | `https://launchpromptly-api-950530830180.us-west1.run.app` | API base URL |
 | `flush_at` | `10` | Batch size threshold for auto-flush |
 | `flush_interval` | `5.0` | Timer interval for auto-flush (seconds) |
 | `on` | — | Guardrail event handlers |
