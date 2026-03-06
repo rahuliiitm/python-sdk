@@ -211,6 +211,62 @@ lp = LaunchPromptly(
 
 **Event types:** `pii.detected`, `pii.redacted`, `injection.detected`, `injection.blocked`, `cost.exceeded`, `content.violated`, `schema.invalid`, `model.blocked`
 
+## ML-Enhanced Detection (Optional)
+
+The core SDK uses regex and rule-based detection — zero dependencies, sub-millisecond. For higher accuracy on obfuscated attacks and nuanced content, opt in to local ML models:
+
+```bash
+pip install launchpromptly[ml]
+```
+
+```python
+from launchpromptly import LaunchPromptly
+from launchpromptly.ml import MLToxicityDetector, MLInjectionDetector, PresidioPIIDetector
+
+# Initialize detectors (first run downloads models)
+toxicity = MLToxicityDetector()     # unitary/toxic-bert
+injection = MLInjectionDetector()   # protectai/deberta-v3
+pii = PresidioPIIDetector()         # Microsoft Presidio + spaCy NER
+
+lp = LaunchPromptly(
+    api_key="lp_live_...",
+    security={
+        "pii": {
+            "enabled": True,
+            "redaction": "placeholder",
+            "providers": [pii],       # Adds NER: person names, orgs, locations
+        },
+        "injection": {
+            "enabled": True,
+            "providers": [injection], # Semantic injection detection via DeBERTa
+        },
+        "content_filter": {
+            "enabled": True,
+            "providers": [toxicity],  # ML toxicity: hate speech, threats, obscenity
+        },
+    },
+)
+```
+
+### Layered Defense
+
+ML providers **merge with** the built-in regex/rule detectors — they don't replace them:
+
+| Layer | Speed | Catches | Dependencies |
+|-------|-------|---------|-------------|
+| **Layer 1: Regex/Rules** (always on) | <1ms | Obvious patterns — emails, SSNs, keyword injection | None |
+| **Layer 2: Local ML** (opt-in) | <100ms | Obfuscated attacks, person names, nuanced hate speech | `transformers`, `presidio-analyzer` |
+
+All ML inference runs locally — no data leaves your infrastructure.
+
+### ML Detectors
+
+| Detector | Model | What it adds |
+|----------|-------|-------------|
+| `MLToxicityDetector` | `unitary/toxic-bert` | Hate speech, threats, obscenity, identity attacks |
+| `MLInjectionDetector` | `protectai/deberta-v3-base-prompt-injection-v2` | Semantic prompt injection (catches obfuscated/encoded attacks) |
+| `PresidioPIIDetector` | Microsoft Presidio + spaCy | Person names, organization names, locations, medical records |
+
 ## Environment Variables
 
 | Variable | Description |
