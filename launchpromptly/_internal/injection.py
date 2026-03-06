@@ -126,6 +126,9 @@ _RULES: List[_InjectionRule] = [
 
 # -- Detection -----------------------------------------------------------------
 
+_MAX_INJECTION_SCAN_LENGTH = 500_000  # 500KB
+
+
 def detect_injection(
     text: str,
     options: Optional[InjectionOptions] = None,
@@ -133,9 +136,13 @@ def detect_injection(
     """Analyze text for prompt injection patterns.
 
     Returns a risk score (0-1), triggered categories, and recommended action.
+    Text longer than 500KB is truncated before scanning.
     """
     if not text:
         return InjectionAnalysis(risk_score=0.0, triggered=[], action="allow")
+
+    # Cap input length to prevent DoS
+    scan_text = text[:_MAX_INJECTION_SCAN_LENGTH] if len(text) > _MAX_INJECTION_SCAN_LENGTH else text
 
     warn_threshold = (options.warn_threshold if options and options.warn_threshold is not None else 0.3)
     block_threshold = (options.block_threshold if options and options.block_threshold is not None else 0.7)
@@ -148,7 +155,7 @@ def detect_injection(
         match_count = 0
 
         for pattern in rule.patterns:
-            if pattern.search(text):
+            if pattern.search(scan_text):
                 rule_triggered = True
                 match_count += 1
 

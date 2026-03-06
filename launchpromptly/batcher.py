@@ -71,9 +71,11 @@ class EventBatcher:
 
         batch = self._queue[:]
         self._queue.clear()
-        self._flushing = False
 
-        await self._send_with_retry(batch, 0)
+        try:
+            await self._send_with_retry(batch, 0)
+        finally:
+            self._flushing = False
 
     def _flush_sync(self) -> None:
         """Synchronous flush for non-async contexts."""
@@ -83,9 +85,11 @@ class EventBatcher:
 
         batch = self._queue[:]
         self._queue.clear()
-        self._flushing = False
 
-        self._send_sync(batch, 0)
+        try:
+            self._send_sync(batch, 0)
+        finally:
+            self._flushing = False
 
     async def _send_with_retry(
         self, events: list[IngestEventPayload], attempt: int

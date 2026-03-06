@@ -68,7 +68,7 @@ _PHONE_INTL_RE = re.compile(
 
 _SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 
-_CREDIT_CARD_RE = re.compile(r"\b(?:\d[ \-]*?){13,19}\b")
+_CREDIT_CARD_RE = re.compile(r"\b\d(?:[\s\-]?\d){12,18}\b")
 
 _IP_V4_RE = re.compile(
     r"\b(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\."
@@ -247,6 +247,9 @@ def _deduplicate_detections(sorted_dets: List[PIIDetection]) -> List[PIIDetectio
     return result
 
 
+_MAX_SCAN_LENGTH = 1_000_000  # 1MB — cap input to prevent DoS via regex scanning
+
+
 def detect_pii(
     text: str,
     options: Optional[PIIDetectOptions] = None,
@@ -254,9 +257,13 @@ def detect_pii(
     """Detect PII entities in text using regex patterns.
 
     Returns a list of detections sorted by start position.
+    Text longer than 1MB is truncated before scanning.
     """
     if not text:
         return []
+
+    # Cap input length to prevent DoS
+    scan_text = text[:_MAX_SCAN_LENGTH] if len(text) > _MAX_SCAN_LENGTH else text
 
     allowed_types = set(options.types) if options and options.types else None
     detections: List[PIIDetection] = []
@@ -265,7 +272,7 @@ def detect_pii(
         if allowed_types and pattern.type not in allowed_types:
             continue
 
-        for match in pattern.regex.finditer(text):
+        for match in pattern.regex.finditer(scan_text):
             value = match.group(0)
 
             # Run optional validation (e.g., Luhn for credit cards)

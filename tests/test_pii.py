@@ -296,3 +296,33 @@ def test_regex_pii_detector_detect_works():
     result = detector.detect("Email: a@b.com")
     assert len(result) == 1
     assert result[0].type == "email"
+
+
+# -- Security regression: ReDoS resistance ------------------------------------
+
+def test_credit_card_regex_no_catastrophic_backtracking():
+    import time
+    adversarial = "1234 5678 9012 3456 7890 1234 5678 9012 3456 " * 20
+    start = time.monotonic()
+    detect_pii(adversarial, PIIDetectOptions(types=["credit_card"]))
+    elapsed = time.monotonic() - start
+    assert elapsed < 0.1, f"ReDoS: credit card regex took {elapsed:.2f}s"
+
+
+def test_credit_card_regex_digits_only_no_hang():
+    import time
+    adversarial = "1" * 1000 + "X"
+    start = time.monotonic()
+    detect_pii(adversarial, PIIDetectOptions(types=["credit_card"]))
+    elapsed = time.monotonic() - start
+    assert elapsed < 0.1, f"ReDoS: credit card regex took {elapsed:.2f}s"
+
+
+def test_input_length_capped_for_dos_prevention():
+    import time
+    huge = "a@b.com " * 200000
+    start = time.monotonic()
+    result = detect_pii(huge)
+    elapsed = time.monotonic() - start
+    assert elapsed < 5.0, f"DoS: detection took {elapsed:.2f}s on huge input"
+    assert len(result) > 0

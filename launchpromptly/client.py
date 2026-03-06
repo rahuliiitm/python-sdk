@@ -99,6 +99,12 @@ class LaunchPromptly:
 
         self._api_key = resolved_key
         self._endpoint = endpoint
+
+        # Validate endpoint URL to prevent SSRF
+        from urllib.parse import urlparse
+        parsed = urlparse(endpoint)
+        if parsed.scheme not in ("https", "http"):
+            raise ValueError(f"Endpoint must use HTTPS or HTTP protocol, got: {parsed.scheme!r}")
         self._event_handlers: dict = on or {}
         self._batcher = EventBatcher(resolved_key, endpoint, flush_at, flush_interval)
         self._destroyed = False
@@ -374,6 +380,7 @@ class _WrappedCompletions:
                 if input_pii_detections and redaction_strategy != "none":
                     redaction_applied = True
                     redacted_messages = []
+                    shared_counters: dict[str, int] = {}
                     for msg in messages:
                         result = redact_pii(
                             msg.get("content", ""),
@@ -382,6 +389,7 @@ class _WrappedCompletions:
                                 types=pii_opts.types,
                                 providers=pii_opts.providers,
                             ),
+                            shared_counters=shared_counters,
                         )
                         redaction_mapping.update(result.mapping)
                         redacted_messages.append({**msg, "content": result.redacted_text})

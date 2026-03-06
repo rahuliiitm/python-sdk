@@ -178,3 +178,23 @@ def test_gracefully_handles_provider_errors():
     result = redact_pii("john@acme.com", RedactionOptions(providers=[FailingProvider()]))
     # Should still work with built-in detector
     assert len(result.detections) == 1
+
+
+# -- Security regression: shared counters prevent placeholder collisions -------
+
+def test_shared_counters_prevent_placeholder_collisions():
+    counters: dict[str, int] = {}
+    r1 = redact_pii("Contact alice@example.com", RedactionOptions(strategy="placeholder"), shared_counters=counters)
+    r2 = redact_pii("Contact bob@example.com", RedactionOptions(strategy="placeholder"), shared_counters=counters)
+
+    assert "[EMAIL_1]" in r1.redacted_text
+    assert "[EMAIL_2]" in r2.redacted_text
+
+
+def test_without_shared_counters_placeholders_collide():
+    r1 = redact_pii("Contact alice@example.com", RedactionOptions(strategy="placeholder"))
+    r2 = redact_pii("Contact bob@example.com", RedactionOptions(strategy="placeholder"))
+
+    # Both get [EMAIL_1] — this is the collision that shared counters fix
+    assert "[EMAIL_1]" in r1.redacted_text
+    assert "[EMAIL_1]" in r2.redacted_text

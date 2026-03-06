@@ -199,10 +199,15 @@ def _mask_replacement(value: str, pii_type: str, masking: MaskingOptions) -> str
 def redact_pii(
     text: str,
     options: Optional[RedactionOptions] = None,
+    shared_counters: Optional[Dict[str, int]] = None,
 ) -> RedactionResult:
     """Detect and redact PII in text.
 
     Returns the redacted text, a list of detections, and a mapping for de-redaction.
+
+    Pass ``shared_counters`` to share placeholder indices across multiple calls
+    (e.g., when redacting multiple messages in a conversation).
+    This prevents placeholder collisions like two different emails both becoming [EMAIL_1].
     """
     if not text:
         return RedactionResult(redacted_text="", detections=[], mapping={})
@@ -230,7 +235,7 @@ def redact_pii(
         return RedactionResult(redacted_text=text, detections=[], mapping={})
 
     mapping: Dict[str, str] = {}
-    counters: Dict[str, int] = {}
+    counters: Dict[str, int] = shared_counters if shared_counters is not None else {}
 
     # Build redacted text by replacing from end to start (preserves positions)
     redacted = text
