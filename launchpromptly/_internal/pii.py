@@ -127,7 +127,7 @@ _DRIVERS_LICENSE_US_RE = re.compile(r'\b[A-Z]\d{3}-\d{4}-\d{4}\b')
 
 # -- Luhn check for credit cards ----------------------------------------------
 
-def _luhn_check(digits: str) -> bool:
+def _luhn_check(digits: str, _full_text: Optional[str] = None, _match_index: Optional[int] = None) -> bool:
     nums = re.sub(r"[\s\-]", "", digits)
     if not re.fullmatch(r"\d{13,19}", nums):
         return False
@@ -186,6 +186,181 @@ _WELL_KNOWN_IPS = frozenset({
 })
 
 
+def _is_private_or_reserved_ip(ip: str) -> bool:
+    """Check if an IP is in a private/reserved range (not PII)."""
+    if ip in _WELL_KNOWN_IPS:
+        return True
+    parts = ip.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        return False
+    a, b, c = nums[0], nums[1], nums[2]
+    # Private ranges: 10.x.x.x, 172.16-31.x.x, 192.168.x.x
+    if a == 10:
+        return True
+    if a == 172 and 16 <= b <= 31:
+        return True
+    if a == 192 and b == 168:
+        return True
+    # Link-local: 169.254.x.x
+    if a == 169 and b == 254:
+        return True
+    # Documentation ranges (RFC 5737)
+    if a == 192 and b == 0 and c == 2:
+        return True
+    if a == 198 and b == 51 and c == 100:
+        return True
+    if a == 203 and b == 0 and c == 113:
+        return True
+    return False
+
+
+# -- Positive-context checks (reduce false positives) -------------------------
+#
+# Instead of maintaining an infinite blocklist of non-PII contexts, we require
+# POSITIVE context for ambiguous matches. Formatted matches (with dashes/dots/
+# parens) pass through. Bare digit/alphanumeric sequences need type-specific
+# keywords.
+
+_PHONE_CONTEXT_RE = re.compile(
+    r"\b(?:call|phone|tel(?:ephone)?|mobile|cell(?:ular)?|fax|contact|reach"
+    r"|dial|text|sms|whatsapp|ring|landline|ph)\b.{0,15}$",
+    re.IGNORECASE,
+)
+
+_SSN_CONTEXT_RE = re.compile(
+    r"\b(?:ssn|social\s+security|social\s+sec|ss#|soc\s*sec)\b.{0,15}$",
+    re.IGNORECASE,
+)
+
+_NHS_CONTEXT_RE = re.compile(
+    r"\b(?:nhs|national\s+health|health\s+service)\b.{0,15}$",
+    re.IGNORECASE,
+)
+
+_AADHAAR_CONTEXT_RE = re.compile(
+    r"\b(?:aadhaar|aadhar|uid|uidai|unique\s+id)\b.{0,15}$",
+    re.IGNORECASE,
+)
+
+_MEDICARE_CONTEXT_RE = re.compile(
+    r"\b(?:medicare|health\s+insurance|irn)\b.{0,15}$",
+    re.IGNORECASE,
+)
+
+_DOB_CONTEXT_RE = re.compile(
+    r"\b(?:born|birth(?:day)?|dob|date\s+of\s+birth|d\.o\.b|age)\b.{0,15}$",
+    re.IGNORECASE,
+)
+
+_PASSPORT_CONTEXT_RE = re.compile(
+    r"\b(?:passport)\b.{0,15}$",
+    re.IGNORECASE,
+)
+
+_VERSION_CONTEXT_RE = re.compile(
+    r"(?:\bv(?:ersion)?\s*[:#]?\s*$|@\s*$|\bv\d+\.\d+\.\s*$)",
+    re.IGNORECASE,
+)
+
+_VERSION_SUFFIX_RE = re.compile(
+    r"^[-.]?(?:alpha|beta|rc|dev|pre|snapshot)\b",
+    re.IGNORECASE,
+)
+
+
+def _context_check(
+    match: str,
+    full_text: Optional[str],
+    match_index: Optional[int],
+    context_re: "re.Pattern[str]",
+    require_always: bool,
+) -> bool:
+    """Generic context check.
+
+    - require_always: if True, context is required even for formatted matches
+      (DOB, passport). Otherwise, formatted matches always pass.
+    """
+    if full_text is None or match_index is None:
+        return True
+
+    if not require_always:
+        digits_only = re.sub(r"\D", "", match)
+        if match != digits_only:
+            return True  # has formatting -> keep
+
+    preceding_start = max(0, match_index - 60)
+    preceding = full_text[preceding_start:match_index]
+    return bool(context_re.search(preceding))
+
+
+def _phone_context_check(
+    match: str, full_text: Optional[str] = None, match_index: Optional[int] = None,
+) -> bool:
+    return _context_check(match, full_text, match_index, _PHONE_CONTEXT_RE, False)
+
+
+def _ssn_context_check(
+    match: str, full_text: Optional[str] = None, match_index: Optional[int] = None,
+) -> bool:
+    if not _ssn_check(match):
+        return False
+    return _context_check(match, full_text, match_index, _SSN_CONTEXT_RE, False)
+
+
+def _nhs_context_check(
+    match: str, full_text: Optional[str] = None, match_index: Optional[int] = None,
+) -> bool:
+    if not _nhs_check(match):
+        return False
+    return _context_check(match, full_text, match_index, _NHS_CONTEXT_RE, False)
+
+
+def _aadhaar_context_check(
+    match: str, full_text: Optional[str] = None, match_index: Optional[int] = None,
+) -> bool:
+    if not _aadhaar_check(match):
+        return False
+    return _context_check(match, full_text, match_index, _AADHAAR_CONTEXT_RE, False)
+
+
+def _medicare_context_check(
+    match: str, full_text: Optional[str] = None, match_index: Optional[int] = None,
+) -> bool:
+    return _context_check(match, full_text, match_index, _MEDICARE_CONTEXT_RE, False)
+
+
+def _dob_context_check(
+    match: str, full_text: Optional[str] = None, match_index: Optional[int] = None,
+) -> bool:
+    return _context_check(match, full_text, match_index, _DOB_CONTEXT_RE, True)
+
+
+def _passport_context_check(
+    match: str, full_text: Optional[str] = None, match_index: Optional[int] = None,
+) -> bool:
+    return _context_check(match, full_text, match_index, _PASSPORT_CONTEXT_RE, True)
+
+
+def _ip_context_check(
+    match: str, full_text: Optional[str] = None, match_index: Optional[int] = None,
+) -> bool:
+    if _is_private_or_reserved_ip(match):
+        return False
+    if full_text is None or match_index is None:
+        return True
+    preceding = full_text[max(0, match_index - 30):match_index]
+    if _VERSION_CONTEXT_RE.search(preceding):
+        return False
+    following = full_text[match_index + len(match):match_index + len(match) + 10]
+    if _VERSION_SUFFIX_RE.search(following):
+        return False
+    return True
+
+
 # -- Pattern registry ---------------------------------------------------------
 
 @dataclass
@@ -193,14 +368,14 @@ class _PatternEntry:
     type: PIIType
     regex: re.Pattern[str]
     confidence: float
-    validate: Optional[Callable[[str], bool]] = None
+    validate: Optional[Callable[..., bool]] = None
 
 
 _PATTERNS: List[_PatternEntry] = [
     _PatternEntry(type="email", regex=_EMAIL_RE, confidence=0.95),
-    _PatternEntry(type="phone", regex=_PHONE_US_RE, confidence=0.85),
+    _PatternEntry(type="phone", regex=_PHONE_US_RE, confidence=0.85, validate=_phone_context_check),
     _PatternEntry(type="phone", regex=_PHONE_INTL_RE, confidence=0.8),
-    _PatternEntry(type="ssn", regex=_SSN_RE, confidence=0.95, validate=_ssn_check),
+    _PatternEntry(type="ssn", regex=_SSN_RE, confidence=0.95, validate=_ssn_context_check),
     _PatternEntry(
         type="credit_card",
         regex=_CREDIT_CARD_RE,
@@ -211,10 +386,10 @@ _PATTERNS: List[_PatternEntry] = [
         type="ip_address",
         regex=_IP_V4_RE,
         confidence=0.8,
-        validate=lambda ip: ip not in _WELL_KNOWN_IPS,
+        validate=_ip_context_check,
     ),
     _PatternEntry(type="api_key", regex=_API_KEY_RE, confidence=0.95),
-    _PatternEntry(type="date_of_birth", regex=_DATE_OF_BIRTH_RE, confidence=0.7),
+    _PatternEntry(type="date_of_birth", regex=_DATE_OF_BIRTH_RE, confidence=0.7, validate=_dob_context_check),
     _PatternEntry(type="us_address", regex=_US_ADDRESS_RE, confidence=0.7),
     # International PII patterns
     _PatternEntry(type="iban", regex=_IBAN_RE, confidence=0.9),
@@ -222,18 +397,18 @@ _PATTERNS: List[_PatternEntry] = [
         type="nhs_number",
         regex=_NHS_NUMBER_RE,
         confidence=0.8,
-        validate=_nhs_check,
+        validate=_nhs_context_check,
     ),
     _PatternEntry(type="uk_nino", regex=_UK_NINO_RE, confidence=0.9),
-    _PatternEntry(type="passport", regex=_PASSPORT_RE, confidence=0.7),
+    _PatternEntry(type="passport", regex=_PASSPORT_RE, confidence=0.7, validate=_passport_context_check),
     _PatternEntry(
         type="aadhaar",
         regex=_AADHAAR_RE,
         confidence=0.85,
-        validate=_aadhaar_check,
+        validate=_aadhaar_context_check,
     ),
     _PatternEntry(type="eu_phone", regex=_EU_PHONE_RE, confidence=0.8),
-    _PatternEntry(type="medicare", regex=_MEDICARE_AU_RE, confidence=0.75),
+    _PatternEntry(type="medicare", regex=_MEDICARE_AU_RE, confidence=0.75, validate=_medicare_context_check),
     _PatternEntry(type="drivers_license", regex=_DRIVERS_LICENSE_US_RE, confidence=0.75),
 ]
 
@@ -289,8 +464,8 @@ def detect_pii(
         for match in pattern.regex.finditer(scan_text):
             value = match.group(0)
 
-            # Run optional validation (e.g., Luhn for credit cards)
-            if pattern.validate and not pattern.validate(value):
+            # Run optional validation (e.g., Luhn for credit cards, context checks)
+            if pattern.validate and not pattern.validate(value, scan_text, match.start()):
                 continue
 
             detections.append(

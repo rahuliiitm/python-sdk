@@ -142,10 +142,10 @@ def test_detects_mastercard():
 # -- IP Address ----------------------------------------------------------------
 
 def test_detects_valid_ip():
-    result = detect_pii("Server at 203.0.113.42")
+    result = detect_pii("Server at 85.12.45.78")
     ips = [d for d in result if d.type == "ip_address"]
     assert len(ips) == 1
-    assert ips[0].value == "203.0.113.42"
+    assert ips[0].value == "85.12.45.78"
 
 
 def test_filters_well_known_ips_localhost():
@@ -358,3 +358,151 @@ def test_input_length_capped_for_dos_prevention():
     elapsed = time.monotonic() - start
     assert elapsed < 5.0, f"DoS: detection took {elapsed:.2f}s on huge input"
     assert len(result) > 0
+
+
+# -- False positive prevention (context-aware) --------------------------------
+
+class TestPhoneContextCheck:
+    def test_bare_digits_without_context_not_detected(self):
+        result = detect_pii("order number 5551234567")
+        phones = [d for d in result if d.type == "phone"]
+        assert len(phones) == 0
+
+    def test_bare_digits_with_context_detected(self):
+        result = detect_pii("call 5551234567")
+        phones = [d for d in result if d.type == "phone"]
+        assert len(phones) >= 1
+
+    def test_formatted_always_detected(self):
+        result = detect_pii("order 555-123-4567")
+        phones = [d for d in result if d.type == "phone"]
+        assert len(phones) >= 1
+
+    def test_mobile_context_detected(self):
+        result = detect_pii("mobile 9876543210")
+        phones = [d for d in result if d.type == "phone"]
+        assert len(phones) >= 1
+
+    def test_product_number_not_detected(self):
+        result = detect_pii("i need to order product with number 95789930")
+        phones = [d for d in result if d.type == "phone"]
+        assert len(phones) == 0
+
+
+class TestSSNContextCheck:
+    def test_bare_digits_without_context_not_detected(self):
+        result = detect_pii("reference 123456789")
+        ssns = [d for d in result if d.type == "ssn"]
+        assert len(ssns) == 0
+
+    def test_with_context_detected(self):
+        result = detect_pii("SSN: 123456789")
+        ssns = [d for d in result if d.type == "ssn"]
+        assert len(ssns) == 1
+
+    def test_formatted_always_detected(self):
+        result = detect_pii("ref 123-45-6789")
+        ssns = [d for d in result if d.type == "ssn"]
+        assert len(ssns) == 1
+
+
+class TestDOBContextCheck:
+    def test_date_without_context_not_detected(self):
+        result = detect_pii("meeting on 03/15/2026")
+        dobs = [d for d in result if d.type == "date_of_birth"]
+        assert len(dobs) == 0
+
+    def test_with_born_context_detected(self):
+        result = detect_pii("born 03/15/1990")
+        dobs = [d for d in result if d.type == "date_of_birth"]
+        assert len(dobs) == 1
+
+    def test_with_dob_context_detected(self):
+        result = detect_pii("DOB: 03/15/1990")
+        dobs = [d for d in result if d.type == "date_of_birth"]
+        assert len(dobs) == 1
+
+    def test_with_born_on_context_detected(self):
+        result = detect_pii("Born on 12-25-2000")
+        dobs = [d for d in result if d.type == "date_of_birth"]
+        assert len(dobs) == 1
+
+    def test_formatted_without_context_not_detected(self):
+        result = detect_pii("scheduled for 01/15/1990")
+        dobs = [d for d in result if d.type == "date_of_birth"]
+        assert len(dobs) == 0
+
+
+class TestPassportContextCheck:
+    def test_without_context_not_detected(self):
+        result = detect_pii("product AB123456")
+        passports = [d for d in result if d.type == "passport"]
+        assert len(passports) == 0
+
+    def test_with_context_detected(self):
+        result = detect_pii("passport C12345678")
+        passports = [d for d in result if d.type == "passport"]
+        assert len(passports) == 1
+
+
+class TestIPContextCheck:
+    def test_version_number_not_detected(self):
+        result = detect_pii("version 1.2.3.4")
+        ips = [d for d in result if d.type == "ip_address"]
+        assert len(ips) == 0
+
+    def test_real_ip_detected(self):
+        result = detect_pii("server at 85.12.45.78")
+        ips = [d for d in result if d.type == "ip_address"]
+        assert len(ips) == 1
+
+    def test_private_ip_not_detected(self):
+        result = detect_pii("connect to 192.168.1.100")
+        ips = [d for d in result if d.type == "ip_address"]
+        assert len(ips) == 0
+
+    def test_documentation_range_not_detected(self):
+        result = detect_pii("example 203.0.113.42")
+        ips = [d for d in result if d.type == "ip_address"]
+        assert len(ips) == 0
+
+
+class TestNHSContextCheck:
+    def test_bare_digits_without_context_not_detected(self):
+        result = detect_pii("reference 9434765919")
+        nhs = [d for d in result if d.type == "nhs_number"]
+        assert len(nhs) == 0
+
+    def test_with_context_detected(self):
+        result = detect_pii("NHS 943 476 5919", PIIDetectOptions(types=["nhs_number"]))
+        nhs = [d for d in result if d.type == "nhs_number"]
+        assert len(nhs) == 1
+
+    def test_formatted_always_detected(self):
+        result = detect_pii("ref 943 476 5919", PIIDetectOptions(types=["nhs_number"]))
+        nhs = [d for d in result if d.type == "nhs_number"]
+        assert len(nhs) == 1
+
+
+class TestAadhaarContextCheck:
+    def test_bare_digits_without_context_not_detected(self):
+        result = detect_pii("transaction 234567891234")
+        aadhaar = [d for d in result if d.type == "aadhaar"]
+        assert len(aadhaar) == 0
+
+    def test_with_context_detected(self):
+        result = detect_pii("aadhaar 2345 6789 1234", PIIDetectOptions(types=["aadhaar"]))
+        aadhaar = [d for d in result if d.type == "aadhaar"]
+        assert len(aadhaar) == 1
+
+
+class TestMedicareContextCheck:
+    def test_bare_digits_without_context_not_detected(self):
+        result = detect_pii("code 2123456701", PIIDetectOptions(types=["medicare"]))
+        medicare = [d for d in result if d.type == "medicare"]
+        assert len(medicare) == 0
+
+    def test_with_context_detected(self):
+        result = detect_pii("medicare 2123 45670 1", PIIDetectOptions(types=["medicare"]))
+        medicare = [d for d in result if d.type == "medicare"]
+        assert len(medicare) == 1
