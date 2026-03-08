@@ -91,10 +91,10 @@ def test_mask_ssn_shows_last_4():
 
 def test_mask_ssn_preserves_format():
     result = redact_pii(
-        "SSN is 987-65-4321",
+        "SSN is 078-05-1120",
         RedactionOptions(strategy="mask"),
     )
-    assert "***-**-4321" in result.redacted_text
+    assert "***-**-1120" in result.redacted_text
 
 
 # -- Generic / default masking -------------------------------------------------

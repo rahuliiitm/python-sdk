@@ -25,7 +25,8 @@ from .._internal.content_filter import (
     detect_content_violations, has_blocking_violation, ContentViolation,
 )
 from .._internal.event_types import (
-    IngestEventPayload, PIIDetectionsPayload, InjectionRiskPayload,
+    IngestEventPayload, PIIDetectionsPayload, PIIDetailEntry,
+    InjectionRiskPayload,
     CostGuardPayload, ContentViolationsPayload,
 )
 from .._internal.model_policy import check_model_policy
@@ -457,9 +458,10 @@ class _WrappedGeminiModels:
         # ── POST-CALL SECURITY ─────────────────────────────────
         response_for_caller = result
 
-        if security:
-            response_text = extract_gemini_response_text(result)
+        # Extract response text (needed for both security scanning and event capture)
+        response_text = extract_gemini_response_text(result)
 
+        if security:
             # PII scan response
             pii_opts = security.pii
             if pii_opts and pii_opts.scan_response and response_text:
@@ -542,6 +544,7 @@ class _WrappedGeminiModels:
                 injection_result, cost_violation,
                 input_content_violations, output_content_violations,
                 redaction_applied,
+                response_text=response_text,
             )
         except Exception:
             pass
@@ -561,6 +564,7 @@ class _WrappedGeminiModels:
         input_violations: Optional[list] = None,
         output_violations: Optional[list] = None,
         redaction_applied: bool = False,
+        response_text: Optional[str] = None,
     ) -> None:
         from ..client import _lp_context
 
@@ -623,7 +627,8 @@ class _WrappedGeminiModels:
             feature=feature,
             system_hash=fingerprint.system_hash,
             full_hash=fingerprint.full_hash,
-            prompt_preview=None if security else fingerprint.prompt_preview,
+            prompt_preview=fingerprint.prompt_preview,
+            response_text=response_text or None,
             status_code=200,
             trace_id=trace_id,
             span_name=span_name,
@@ -646,6 +651,14 @@ class _WrappedGeminiModels:
                     types=list(set(d.type for d in input_pii + output_pii)),
                     redaction_applied=redaction_applied,
                     detector_used="both" if has_ml_pii else "regex",
+                    input_details=[
+                        PIIDetailEntry(type=d.type, start=d.start, end=d.end, confidence=d.confidence)
+                        for d in input_pii
+                    ],
+                    output_details=[
+                        PIIDetailEntry(type=d.type, start=d.start, end=d.end, confidence=d.confidence)
+                        for d in output_pii
+                    ],
                 )
             if injection:
                 event.injection_risk = InjectionRiskPayload(

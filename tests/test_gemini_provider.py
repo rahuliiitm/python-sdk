@@ -410,7 +410,7 @@ class TestWrapGeminiClient:
         assert event.pii_detections.redaction_applied is True
 
     @pytest.mark.asyncio
-    async def test_strips_prompt_preview_when_security_enabled(self):
+    async def test_includes_prompt_preview_when_security_enabled(self):
         client, _ = self._make_mock_client()
         lp = self._make_lp()
 
@@ -425,7 +425,7 @@ class TestWrapGeminiClient:
         )
 
         event = lp._batcher.enqueue.call_args[0][0]
-        assert event.prompt_preview is None
+        assert event.prompt_preview is not None
 
     @pytest.mark.asyncio
     async def test_passes_through_non_models_attrs(self):

@@ -376,7 +376,7 @@ class TestWrapAnthropicClient:
         assert event.pii_detections.detector_used == "regex"
 
     @pytest.mark.asyncio
-    async def test_strips_prompt_preview_when_security_enabled(self):
+    async def test_includes_prompt_preview_when_security_enabled(self):
         client, _ = self._make_mock_client()
         lp = self._make_lp()
 
@@ -394,7 +394,7 @@ class TestWrapAnthropicClient:
         )
 
         event = lp._batcher.enqueue.call_args[0][0]
-        assert event.prompt_preview is None
+        assert event.prompt_preview is not None
 
     @pytest.mark.asyncio
     async def test_passes_through_non_messages_attrs(self):

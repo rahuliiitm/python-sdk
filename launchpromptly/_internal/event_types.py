@@ -5,12 +5,22 @@ from typing import Any, Dict, List, Literal, Optional
 
 
 @dataclass
+class PIIDetailEntry:
+    type: str
+    start: int
+    end: int
+    confidence: float
+
+
+@dataclass
 class PIIDetectionsPayload:
     input_count: int
     output_count: int
     types: List[str]
     redaction_applied: bool
     detector_used: Literal["regex", "ml", "both"]
+    input_details: Optional[List[PIIDetailEntry]] = None
+    output_details: Optional[List[PIIDetailEntry]] = None
 
 
 @dataclass
@@ -104,6 +114,7 @@ class IngestEventPayload:
     system_hash: Optional[str] = None
     full_hash: Optional[str] = None
     prompt_preview: Optional[str] = None
+    response_text: Optional[str] = None
     status_code: Optional[int] = None
     trace_id: Optional[str] = None
     span_name: Optional[str] = None
@@ -144,6 +155,8 @@ class IngestEventPayload:
             d["fullHash"] = self.full_hash
         if self.prompt_preview is not None:
             d["promptPreview"] = self.prompt_preview
+        if self.response_text is not None:
+            d["responseText"] = self.response_text
         if self.status_code is not None:
             d["statusCode"] = self.status_code
         if self.trace_id is not None:
@@ -157,13 +170,24 @@ class IngestEventPayload:
 
         # Security metadata (camelCase keys)
         if self.pii_detections is not None:
-            d["piiDetections"] = {
+            pii_dict: Dict[str, Any] = {
                 "inputCount": self.pii_detections.input_count,
                 "outputCount": self.pii_detections.output_count,
                 "types": self.pii_detections.types,
                 "redactionApplied": self.pii_detections.redaction_applied,
                 "detectorUsed": self.pii_detections.detector_used,
             }
+            if self.pii_detections.input_details is not None:
+                pii_dict["inputDetails"] = [
+                    {"type": e.type, "start": e.start, "end": e.end, "confidence": e.confidence}
+                    for e in self.pii_detections.input_details
+                ]
+            if self.pii_detections.output_details is not None:
+                pii_dict["outputDetails"] = [
+                    {"type": e.type, "start": e.start, "end": e.end, "confidence": e.confidence}
+                    for e in self.pii_detections.output_details
+                ]
+            d["piiDetections"] = pii_dict
         if self.injection_risk is not None:
             d["injectionRisk"] = {
                 "score": self.injection_risk.score,

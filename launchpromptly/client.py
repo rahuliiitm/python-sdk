@@ -20,7 +20,8 @@ from .types import LaunchPromptlyOptions, RequestContext, WrapOptions
 from ._internal.cost import calculate_event_cost
 from ._internal.fingerprint import fingerprint_messages
 from ._internal.event_types import (
-    IngestEventPayload, PIIDetectionsPayload, InjectionRiskPayload,
+    IngestEventPayload, PIIDetectionsPayload, PIIDetailEntry,
+    InjectionRiskPayload,
     CostGuardPayload, ContentViolationsPayload,
     JailbreakRiskPayload, UnicodeThreatsPayload, SecretDetectionsPayload,
     TopicViolationPayload, OutputSafetyPayload, PromptLeakagePayload,
@@ -609,22 +610,22 @@ class _WrappedCompletions:
         # ── POST-CALL SECURITY PIPELINE ─────────────────────────────
         response_for_caller = result
 
-        if security:
-            # Extract response text
-            response_text = None
-            choices = getattr(result, "choices", None)
-            if choices is None and isinstance(result, dict):
-                choices = result.get("choices")
-            if choices and len(choices) > 0:
-                choice = choices[0]
-                msg = getattr(choice, "message", None)
-                if msg is None and isinstance(choice, dict):
-                    msg = choice.get("message")
-                if msg:
-                    response_text = getattr(msg, "content", None)
-                    if response_text is None and isinstance(msg, dict):
-                        response_text = msg.get("content")
+        # Extract response text (needed for both security scanning and event capture)
+        response_text = None
+        choices = getattr(result, "choices", None)
+        if choices is None and isinstance(result, dict):
+            choices = result.get("choices")
+        if choices and len(choices) > 0:
+            choice = choices[0]
+            msg = getattr(choice, "message", None)
+            if msg is None and isinstance(choice, dict):
+                msg = choice.get("message")
+            if msg:
+                response_text = getattr(msg, "content", None)
+                if response_text is None and isinstance(msg, dict):
+                    response_text = msg.get("content")
 
+        if security:
             # Post-call: scan response for PII
             pii_opts = security.pii
             if pii_opts and pii_opts.scan_response and response_text:
@@ -746,6 +747,7 @@ class _WrappedCompletions:
                 topic_violation_result=topic_violation_result,
                 output_safety_threats=output_safety_threats,
                 prompt_leakage_result=prompt_leakage_result,
+                response_text=response_text,
             )
         except Exception:
             pass  # SDK must never throw
@@ -772,6 +774,7 @@ class _WrappedCompletions:
         topic_violation_result: Optional[TopicViolation] = None,
         output_safety_threats: Optional[list] = None,
         prompt_leakage_result: Optional[PromptLeakageResult] = None,
+        response_text: Optional[str] = None,
     ) -> None:
         usage = getattr(result, "usage", None)
         if usage is None:
@@ -831,8 +834,8 @@ class _WrappedCompletions:
             feature=feature,
             system_hash=fingerprint.system_hash,
             full_hash=fingerprint.full_hash,
-            # Strip promptPreview when security is enabled (PII safety)
-            prompt_preview=None if security else fingerprint.prompt_preview,
+            prompt_preview=fingerprint.prompt_preview,
+            response_text=response_text or None,
             status_code=200,
             trace_id=trace_id,
             span_name=span_name,
@@ -856,6 +859,14 @@ class _WrappedCompletions:
                     types=list(set(d.type for d in input_pii + output_pii)),
                     redaction_applied=redaction_applied,
                     detector_used="both" if has_ml_pii else "regex",
+                    input_details=[
+                        PIIDetailEntry(type=d.type, start=d.start, end=d.end, confidence=d.confidence)
+                        for d in input_pii
+                    ],
+                    output_details=[
+                        PIIDetailEntry(type=d.type, start=d.start, end=d.end, confidence=d.confidence)
+                        for d in output_pii
+                    ],
                 )
 
             if injection:
