@@ -44,6 +44,51 @@ class StreamGuardEventPayload:
 
 
 @dataclass
+class JailbreakRiskPayload:
+    score: float
+    triggered: List[str]
+    action: Literal["allow", "warn", "block"]
+    decoded_payloads: Optional[List[str]] = None
+
+
+@dataclass
+class UnicodeThreatsPayload:
+    found: bool
+    threat_count: int
+    threat_types: List[str]
+    action: Literal["strip", "warn", "block"]
+
+
+@dataclass
+class SecretDetectionsPayload:
+    input_count: int
+    output_count: int
+    types: List[str]
+
+
+@dataclass
+class TopicViolationPayload:
+    type: Literal["off_topic", "blocked_topic"]
+    topic: Optional[str]
+    matched_keywords: List[str]
+    score: float
+
+
+@dataclass
+class OutputSafetyPayload:
+    threat_count: int
+    categories: List[str]
+    threats: List[Dict[str, str]]
+
+
+@dataclass
+class PromptLeakagePayload:
+    leaked: bool
+    similarity: float
+    meta_response_detected: bool
+
+
+@dataclass
 class IngestEventPayload:
     """Payload shape for a single LLM event sent to the LaunchPromptly API."""
 
@@ -71,6 +116,12 @@ class IngestEventPayload:
     cost_guard: Optional[CostGuardPayload] = None
     content_violations: Optional[ContentViolationsPayload] = None
     stream_guard: Optional[StreamGuardEventPayload] = None
+    jailbreak_risk: Optional[JailbreakRiskPayload] = None
+    unicode_threats: Optional[UnicodeThreatsPayload] = None
+    secret_detections: Optional[SecretDetectionsPayload] = None
+    topic_violation: Optional[TopicViolationPayload] = None
+    output_safety: Optional[OutputSafetyPayload] = None
+    prompt_leakage: Optional[PromptLeakagePayload] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to a JSON-serialisable dict, omitting None values."""
@@ -140,6 +191,49 @@ class IngestEventPayload:
                 "violationTypes": self.stream_guard.violation_types,
                 "approximateOutputTokens": self.stream_guard.approximate_output_tokens,
                 "responseLength": self.stream_guard.response_length,
+            }
+        if self.jailbreak_risk is not None:
+            jr: Dict[str, Any] = {
+                "score": self.jailbreak_risk.score,
+                "triggered": self.jailbreak_risk.triggered,
+                "action": self.jailbreak_risk.action,
+            }
+            if self.jailbreak_risk.decoded_payloads is not None:
+                jr["decodedPayloads"] = self.jailbreak_risk.decoded_payloads
+            d["jailbreakRisk"] = jr
+        if self.unicode_threats is not None:
+            d["unicodeThreats"] = {
+                "found": self.unicode_threats.found,
+                "threatCount": self.unicode_threats.threat_count,
+                "threatTypes": self.unicode_threats.threat_types,
+                "action": self.unicode_threats.action,
+            }
+        if self.secret_detections is not None:
+            d["secretDetections"] = {
+                "inputCount": self.secret_detections.input_count,
+                "outputCount": self.secret_detections.output_count,
+                "types": self.secret_detections.types,
+            }
+        if self.topic_violation is not None:
+            tv: Dict[str, Any] = {
+                "type": self.topic_violation.type,
+                "matchedKeywords": self.topic_violation.matched_keywords,
+                "score": self.topic_violation.score,
+            }
+            if self.topic_violation.topic is not None:
+                tv["topic"] = self.topic_violation.topic
+            d["topicViolation"] = tv
+        if self.output_safety is not None:
+            d["outputSafety"] = {
+                "threatCount": self.output_safety.threat_count,
+                "categories": self.output_safety.categories,
+                "threats": self.output_safety.threats,
+            }
+        if self.prompt_leakage is not None:
+            d["promptLeakage"] = {
+                "leaked": self.prompt_leakage.leaked,
+                "similarity": self.prompt_leakage.similarity,
+                "metaResponseDetected": self.prompt_leakage.meta_response_detected,
             }
 
         return d

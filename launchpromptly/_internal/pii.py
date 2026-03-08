@@ -66,7 +66,7 @@ _PHONE_INTL_RE = re.compile(
     re.MULTILINE,
 )
 
-_SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+_SSN_RE = re.compile(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b")
 
 _CREDIT_CARD_RE = re.compile(r"\b\d(?:[\s\-]?\d){12,18}\b")
 
@@ -159,6 +159,20 @@ def _aadhaar_check(value: str) -> bool:
     return len(digits) == 12 and digits.isdigit()
 
 
+# -- SSN validation (area/group/serial checks) --------------------------------
+
+def _ssn_check(value: str) -> bool:
+    digits = re.sub(r"[-\s]", "", value)
+    if len(digits) != 9:
+        return False
+    area, group, serial = int(digits[:3]), int(digits[3:5]), int(digits[5:9])
+    if area == 0 or area == 666 or area >= 900:
+        return False
+    if group == 0 or serial == 0:
+        return False
+    return True
+
+
 # -- Well-known non-PII IP addresses ------------------------------------------
 
 _WELL_KNOWN_IPS = frozenset({
@@ -186,7 +200,7 @@ _PATTERNS: List[_PatternEntry] = [
     _PatternEntry(type="email", regex=_EMAIL_RE, confidence=0.95),
     _PatternEntry(type="phone", regex=_PHONE_US_RE, confidence=0.85),
     _PatternEntry(type="phone", regex=_PHONE_INTL_RE, confidence=0.8),
-    _PatternEntry(type="ssn", regex=_SSN_RE, confidence=0.95),
+    _PatternEntry(type="ssn", regex=_SSN_RE, confidence=0.95, validate=_ssn_check),
     _PatternEntry(
         type="credit_card",
         regex=_CREDIT_CARD_RE,

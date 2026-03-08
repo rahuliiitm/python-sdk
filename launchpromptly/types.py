@@ -7,10 +7,16 @@ if TYPE_CHECKING:
     from ._internal.content_filter import ContentFilterOptions
     from ._internal.cost_guard import CostGuardOptions
     from ._internal.injection import InjectionAnalysis, InjectionDetectorProvider
+    from ._internal.jailbreak import JailbreakAnalysis, JailbreakDetectorProvider
     from ._internal.model_policy import ModelPolicyOptions
+    from ._internal.output_safety import OutputSafetyCategory, OutputSafetyThreat
     from ._internal.pii import PIIDetection, PIIDetectorProvider, PIIType
+    from ._internal.prompt_leakage import PromptLeakageResult
     from ._internal.redaction import RedactionStrategy
     from ._internal.schema_validator import OutputSchemaOptions
+    from ._internal.secret_detection import CustomSecretPattern, SecretDetection
+    from ._internal.topic_guard import TopicDefinition, TopicViolation
+    from ._internal.unicode_sanitizer import UnicodeScanResult
 
 
 @dataclass
@@ -57,6 +63,60 @@ class InjectionSecurityOptions:
 
 
 @dataclass
+class JailbreakSecurityOptions:
+    enabled: Optional[bool] = None
+    block_threshold: Optional[float] = None
+    warn_threshold: Optional[float] = None
+    block_on_detection: Optional[bool] = None
+    providers: Optional[List[JailbreakDetectorProvider]] = None
+    on_detect: Optional[Callable[[JailbreakAnalysis], None]] = None
+
+
+@dataclass
+class UnicodeSanitizerSecurityOptions:
+    enabled: Optional[bool] = None
+    action: Optional[Literal["strip", "warn", "block"]] = None
+    detect_homoglyphs: Optional[bool] = None
+    on_detect: Optional[Callable[[UnicodeScanResult], None]] = None
+
+
+@dataclass
+class SecretDetectionSecurityOptions:
+    enabled: Optional[bool] = None
+    built_in_patterns: Optional[bool] = None
+    custom_patterns: Optional[List[CustomSecretPattern]] = None
+    scan_response: Optional[bool] = None
+    action: Optional[Literal["warn", "block", "redact"]] = None
+    on_detect: Optional[Callable[[List[SecretDetection]], None]] = None
+
+
+@dataclass
+class TopicGuardSecurityOptions:
+    enabled: Optional[bool] = None
+    allowed_topics: Optional[List[TopicDefinition]] = None
+    blocked_topics: Optional[List[TopicDefinition]] = None
+    action: Optional[Literal["warn", "block"]] = None
+    on_violation: Optional[Callable[[TopicViolation], None]] = None
+
+
+@dataclass
+class OutputSafetySecurityOptions:
+    enabled: Optional[bool] = None
+    categories: Optional[List[OutputSafetyCategory]] = None
+    action: Optional[Literal["warn", "block"]] = None
+    on_detect: Optional[Callable[[List[OutputSafetyThreat]], None]] = None
+
+
+@dataclass
+class PromptLeakageSecurityOptions:
+    enabled: Optional[bool] = None
+    system_prompt: str = ""
+    threshold: Optional[float] = None
+    block_on_leak: Optional[bool] = None
+    on_detect: Optional[Callable[[PromptLeakageResult], None]] = None
+
+
+@dataclass
 class AuditOptions:
     log_level: Optional[str] = None  # 'none' | 'summary' | 'detailed'
 
@@ -100,11 +160,17 @@ class SecurityOptions:
 
     pii: Optional[PIISecurityOptions] = None
     injection: Optional[InjectionSecurityOptions] = None
+    jailbreak: Optional[JailbreakSecurityOptions] = None
     cost_guard: Optional[CostGuardOptions] = None
     content_filter: Optional[ContentFilterOptions] = None
     model_policy: Optional[ModelPolicyOptions] = None
     stream_guard: Optional[StreamGuardOptions] = None
     output_schema: Optional[OutputSchemaOptions] = None
+    unicode_sanitizer: Optional[UnicodeSanitizerSecurityOptions] = None
+    secret_detection: Optional[SecretDetectionSecurityOptions] = None
+    topic_guard: Optional[TopicGuardSecurityOptions] = None
+    output_safety: Optional[OutputSafetySecurityOptions] = None
+    prompt_leakage: Optional[PromptLeakageSecurityOptions] = None
     audit: Optional[AuditOptions] = None
 
 
@@ -116,10 +182,17 @@ GuardrailEventType = Literal[
     "pii.redacted",
     "injection.detected",
     "injection.blocked",
+    "jailbreak.detected",
+    "jailbreak.blocked",
     "cost.exceeded",
     "content.violated",
     "schema.invalid",
     "model.blocked",
+    "unicode.suspicious",
+    "secret.detected",
+    "topic.violated",
+    "output.unsafe",
+    "prompt.leaked",
 ]
 
 

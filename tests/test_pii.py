@@ -75,9 +75,41 @@ def test_detects_ssn_format():
 
 
 def test_detects_ssn_in_context():
-    result = detect_pii("My social security number is 987-65-4321")
+    result = detect_pii("My social security number is 078-65-4321")
     ssns = [d for d in result if d.type == "ssn"]
     assert len(ssns) == 1
+
+
+def test_detects_ssn_without_separators():
+    result = detect_pii("SSN: 123456789")
+    ssns = [d for d in result if d.type == "ssn"]
+    assert len(ssns) == 1
+    assert ssns[0].value == "123456789"
+
+
+def test_detects_ssn_with_spaces():
+    result = detect_pii("SSN: 123 45 6789")
+    ssns = [d for d in result if d.type == "ssn"]
+    assert len(ssns) == 1
+    assert ssns[0].value == "123 45 6789"
+
+
+def test_rejects_ssn_area_000():
+    result = detect_pii("SSN: 000-12-3456")
+    ssns = [d for d in result if d.type == "ssn"]
+    assert len(ssns) == 0
+
+
+def test_rejects_ssn_area_666():
+    result = detect_pii("SSN: 666-12-3456")
+    ssns = [d for d in result if d.type == "ssn"]
+    assert len(ssns) == 0
+
+
+def test_rejects_ssn_area_9xx():
+    result = detect_pii("SSN: 900-12-3456")
+    ssns = [d for d in result if d.type == "ssn"]
+    assert len(ssns) == 0
 
 
 # -- Credit Card ---------------------------------------------------------------

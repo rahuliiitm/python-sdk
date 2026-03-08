@@ -8,12 +8,20 @@ from .errors import (
     ModelPolicyError,
     OutputSchemaError,
     StreamAbortError,
+    JailbreakError,
+    TopicViolationError,
 )
 from .types import (
     CustomerContext,
     LaunchPromptlyOptions,
     PIISecurityOptions,
     InjectionSecurityOptions,
+    JailbreakSecurityOptions,
+    UnicodeSanitizerSecurityOptions,
+    SecretDetectionSecurityOptions,
+    TopicGuardSecurityOptions,
+    OutputSafetySecurityOptions,
+    PromptLeakageSecurityOptions,
     AuditOptions,
     SecurityOptions,
     RequestContext,
@@ -72,6 +80,43 @@ from ._internal.content_filter import (
     ContentViolation,
     ContentFilterProvider,
 )
+from ._internal.jailbreak import (
+    detect_jailbreak,
+    merge_jailbreak_analyses,
+    RuleJailbreakDetector,
+    JailbreakAnalysis,
+    JailbreakOptions,
+    JailbreakDetectorProvider,
+)
+from ._internal.unicode_sanitizer import (
+    scan_unicode,
+    UnicodeScanResult,
+    UnicodeThreat,
+    UnicodeSanitizeOptions,
+)
+from ._internal.secret_detection import (
+    detect_secrets,
+    SecretDetection,
+    SecretDetectionOptions,
+    CustomSecretPattern,
+)
+from ._internal.topic_guard import (
+    check_topic_guard,
+    TopicDefinition,
+    TopicViolation,
+    TopicGuardOptions,
+)
+from ._internal.output_safety import (
+    scan_output_safety,
+    OutputSafetyThreat,
+    OutputSafetyOptions,
+    OutputSafetyCategory,
+)
+from ._internal.prompt_leakage import (
+    detect_prompt_leakage,
+    PromptLeakageResult,
+    PromptLeakageOptions,
+)
 from ._internal.streaming import SecurityStream, StreamSecurityReport
 
 # Provider adapters
@@ -102,6 +147,12 @@ __all__ = [
     # Security types
     "PIISecurityOptions",
     "InjectionSecurityOptions",
+    "JailbreakSecurityOptions",
+    "UnicodeSanitizerSecurityOptions",
+    "SecretDetectionSecurityOptions",
+    "TopicGuardSecurityOptions",
+    "OutputSafetySecurityOptions",
+    "PromptLeakageSecurityOptions",
     "AuditOptions",
     "SecurityOptions",
     "StreamGuardOptions",
@@ -116,6 +167,8 @@ __all__ = [
     "ModelPolicyError",
     "OutputSchemaError",
     "StreamAbortError",
+    "JailbreakError",
+    "TopicViolationError",
     # PII
     "detect_pii",
     "merge_detections",
@@ -163,6 +216,37 @@ __all__ = [
     "CustomPattern",
     "ContentViolation",
     "ContentFilterProvider",
+    # Jailbreak
+    "detect_jailbreak",
+    "merge_jailbreak_analyses",
+    "RuleJailbreakDetector",
+    "JailbreakAnalysis",
+    "JailbreakOptions",
+    "JailbreakDetectorProvider",
+    # Unicode sanitizer
+    "scan_unicode",
+    "UnicodeScanResult",
+    "UnicodeThreat",
+    "UnicodeSanitizeOptions",
+    # Secret detection
+    "detect_secrets",
+    "SecretDetection",
+    "SecretDetectionOptions",
+    "CustomSecretPattern",
+    # Topic guard
+    "check_topic_guard",
+    "TopicDefinition",
+    "TopicViolation",
+    "TopicGuardOptions",
+    # Output safety
+    "scan_output_safety",
+    "OutputSafetyThreat",
+    "OutputSafetyOptions",
+    "OutputSafetyCategory",
+    # Prompt leakage
+    "detect_prompt_leakage",
+    "PromptLeakageResult",
+    "PromptLeakageOptions",
     # Streaming
     "SecurityStream",
     "StreamSecurityReport",

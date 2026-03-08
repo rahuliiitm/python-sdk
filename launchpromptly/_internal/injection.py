@@ -5,6 +5,7 @@ Rule-based detection of common prompt injection patterns.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import List, Literal, Optional, Protocol
 
@@ -124,6 +125,27 @@ _RULES: List[_InjectionRule] = [
 ]
 
 
+# -- Unicode normalization (homoglyph & NFKC) ---------------------------------
+
+_HOMOGLYPH_MAP = {
+    '\u0410': 'A', '\u0430': 'a', '\u0412': 'B', '\u0435': 'e',
+    '\u041d': 'H', '\u043e': 'o', '\u0440': 'p', '\u0441': 'c',
+    '\u0443': 'y', '\u0422': 'T', '\u0445': 'x', '\u041c': 'M',
+    '\u043a': 'k', '\u0456': 'i',
+    '\u0391': 'A', '\u0392': 'B', '\u0395': 'E', '\u0397': 'H',
+    '\u0399': 'I', '\u039a': 'K', '\u039c': 'M', '\u039d': 'N',
+    '\u039f': 'O', '\u03a1': 'P', '\u03a4': 'T', '\u03a5': 'Y',
+    '\u03b1': 'a', '\u03bf': 'o', '\u03c1': 'p',
+}
+
+_HOMOGLYPH_TABLE = str.maketrans(_HOMOGLYPH_MAP)
+
+
+def _normalize_text(text: str) -> str:
+    normalized = unicodedata.normalize('NFKC', text)
+    return normalized.translate(_HOMOGLYPH_TABLE)
+
+
 # -- Detection -----------------------------------------------------------------
 
 _MAX_INJECTION_SCAN_LENGTH = 500_000  # 500KB
@@ -143,6 +165,7 @@ def detect_injection(
 
     # Cap input length to prevent DoS
     scan_text = text[:_MAX_INJECTION_SCAN_LENGTH] if len(text) > _MAX_INJECTION_SCAN_LENGTH else text
+    scan_text = _normalize_text(scan_text)
 
     warn_threshold = (options.warn_threshold if options and options.warn_threshold is not None else 0.3)
     block_threshold = (options.block_threshold if options and options.block_threshold is not None else 0.7)

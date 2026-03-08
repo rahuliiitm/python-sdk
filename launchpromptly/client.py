@@ -11,7 +11,10 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 from .batcher import EventBatcher
-from .errors import PromptInjectionError, CostLimitError, ContentViolationError, ModelPolicyError, OutputSchemaError
+from .errors import (
+    PromptInjectionError, CostLimitError, ContentViolationError,
+    ModelPolicyError, OutputSchemaError, JailbreakError, TopicViolationError,
+)
 from ._internal.schema_validator import validate_output_schema
 from .types import LaunchPromptlyOptions, RequestContext, WrapOptions
 from ._internal.cost import calculate_event_cost
@@ -19,10 +22,18 @@ from ._internal.fingerprint import fingerprint_messages
 from ._internal.event_types import (
     IngestEventPayload, PIIDetectionsPayload, InjectionRiskPayload,
     CostGuardPayload, ContentViolationsPayload,
+    JailbreakRiskPayload, UnicodeThreatsPayload, SecretDetectionsPayload,
+    TopicViolationPayload, OutputSafetyPayload, PromptLeakagePayload,
 )
 from ._internal.pii import detect_pii, merge_detections, PIIDetection, PIIDetectOptions
 from ._internal.redaction import redact_pii, de_redact, RedactionOptions
 from ._internal.injection import detect_injection, merge_injection_analyses, InjectionAnalysis, InjectionOptions
+from ._internal.jailbreak import detect_jailbreak, merge_jailbreak_analyses, JailbreakAnalysis, JailbreakOptions
+from ._internal.unicode_sanitizer import scan_unicode, UnicodeScanResult, UnicodeSanitizeOptions
+from ._internal.secret_detection import detect_secrets, SecretDetection, SecretDetectionOptions
+from ._internal.topic_guard import check_topic_guard, TopicViolation, TopicGuardOptions
+from ._internal.output_safety import scan_output_safety, OutputSafetyThreat, OutputSafetyOptions
+from ._internal.prompt_leakage import detect_prompt_leakage, PromptLeakageResult, PromptLeakageOptions
 from ._internal.cost_guard import CostGuard
 from ._internal.content_filter import detect_content_violations, has_blocking_violation, ContentViolation
 from ._internal.model_policy import check_model_policy
@@ -299,6 +310,13 @@ class _WrappedCompletions:
         input_pii_detections: list[PIIDetection] = []
         output_pii_detections: list[PIIDetection] = []
         injection_result: Optional[InjectionAnalysis] = None
+        jailbreak_result: Optional[JailbreakAnalysis] = None
+        unicode_scan_result: Optional[UnicodeScanResult] = None
+        input_secret_detections: list[SecretDetection] = []
+        output_secret_detections: list[SecretDetection] = []
+        topic_violation_result: Optional[TopicViolation] = None
+        output_safety_threats: list[OutputSafetyThreat] = []
+        prompt_leakage_result: Optional[PromptLeakageResult] = None
         cost_violation = None
         input_content_violations: list[ContentViolation] = []
         output_content_violations: list[ContentViolation] = []
@@ -308,7 +326,35 @@ class _WrappedCompletions:
         effective_kwargs = kwargs
 
         if security:
-            # 0. Model policy enforcement (first check)
+            # 0a. Unicode sanitizer (must run first)
+            if security.unicode_sanitizer and security.unicode_sanitizer.enabled is not False:
+                messages = effective_kwargs.get("messages", [])
+                all_input = "\n".join(m.get("content", "") for m in messages if isinstance(m.get("content"), str))
+                unicode_opts = UnicodeSanitizeOptions(
+                    action=security.unicode_sanitizer.action or "strip",
+                    detect_homoglyphs=security.unicode_sanitizer.detect_homoglyphs,
+                )
+                unicode_scan_result = scan_unicode(all_input, unicode_opts)
+
+                if unicode_scan_result.found:
+                    self._lp._emit("unicode.suspicious", {"result": unicode_scan_result})
+                    if security.unicode_sanitizer.on_detect:
+                        security.unicode_sanitizer.on_detect(unicode_scan_result)
+
+                    if security.unicode_sanitizer.action == "block":
+                        raise RuntimeError(f"Unicode threat detected: {len(unicode_scan_result.threats)} suspicious characters found")
+
+                    if security.unicode_sanitizer.action == "strip" and unicode_scan_result.sanitized_text is not None:
+                        sanitized_messages = []
+                        for msg in messages:
+                            if isinstance(msg.get("content"), str):
+                                msg_scan = scan_unicode(msg["content"], UnicodeSanitizeOptions(action="strip", detect_homoglyphs=security.unicode_sanitizer.detect_homoglyphs))
+                                sanitized_messages.append({**msg, "content": msg_scan.sanitized_text or msg["content"]})
+                            else:
+                                sanitized_messages.append(msg)
+                        effective_kwargs = {**effective_kwargs, "messages": sanitized_messages}
+
+            # 0b. Model policy enforcement
             if security.model_policy:
                 violation = check_model_policy(kwargs, security.model_policy)
                 if violation:
@@ -396,6 +442,25 @@ class _WrappedCompletions:
                     effective_kwargs = {**kwargs, "messages": redacted_messages}
                     self._lp._emit("pii.redacted", {"strategy": redaction_strategy, "count": len(input_pii_detections)})
 
+            # 2b. Secret detection (input)
+            if security.secret_detection and security.secret_detection.enabled is not False:
+                messages = effective_kwargs.get("messages", [])
+                all_input = "\n".join(m.get("content", "") for m in messages if isinstance(m.get("content"), str))
+                input_secret_detections = detect_secrets(
+                    all_input,
+                    SecretDetectionOptions(
+                        built_in_patterns=security.secret_detection.built_in_patterns,
+                        custom_patterns=security.secret_detection.custom_patterns,
+                    ),
+                )
+                if input_secret_detections:
+                    self._lp._emit("secret.detected", {"detections": input_secret_detections, "direction": "input"})
+                    if security.secret_detection.on_detect:
+                        security.secret_detection.on_detect(input_secret_detections)
+                    if security.secret_detection.action == "block":
+                        types_found = ", ".join(d.type for d in input_secret_detections)
+                        raise RuntimeError(f"Secrets detected in input: {types_found}")
+
             # 3. Injection detection
             inj_opts = security.injection
             if inj_opts and inj_opts.enabled is not False:
@@ -431,6 +496,40 @@ class _WrappedCompletions:
                         self._lp._emit("injection.blocked", {"analysis": injection_result})
                         raise PromptInjectionError(injection_result)
 
+            # 3b. Jailbreak detection
+            if security.jailbreak and security.jailbreak.enabled is not False:
+                messages = kwargs.get("messages", [])
+                user_text = "\n".join(
+                    m.get("content", "") for m in messages if m.get("role") in ("user", "tool", "function")
+                )
+                if user_text:
+                    jailbreak_result = detect_jailbreak(
+                        user_text,
+                        JailbreakOptions(
+                            block_threshold=security.jailbreak.block_threshold,
+                            warn_threshold=security.jailbreak.warn_threshold,
+                        ),
+                    )
+                    if security.jailbreak.providers:
+                        provider_results = []
+                        for p in security.jailbreak.providers:
+                            try:
+                                provider_results.append(p.detect(user_text))
+                            except Exception:
+                                pass
+                        if provider_results:
+                            jailbreak_result = merge_jailbreak_analyses(
+                                [jailbreak_result, *provider_results],
+                                JailbreakOptions(block_threshold=security.jailbreak.block_threshold),
+                            )
+                    if jailbreak_result.risk_score > 0:
+                        self._lp._emit("jailbreak.detected", {"analysis": jailbreak_result})
+                        if security.jailbreak.on_detect:
+                            security.jailbreak.on_detect(jailbreak_result)
+                    if security.jailbreak.block_on_detection is not False and jailbreak_result.action == "block":
+                        self._lp._emit("jailbreak.blocked", {"analysis": jailbreak_result})
+                        raise JailbreakError(jailbreak_result)
+
             # 4. Content filter
             cf_opts = security.content_filter
             if cf_opts and cf_opts.enabled is not False:
@@ -449,6 +548,24 @@ class _WrappedCompletions:
                 if input_content_violations and cf_opts.on_violation:
                     for v in input_content_violations:
                         cf_opts.on_violation(v)
+
+            # 5. Topic guard
+            if security.topic_guard and security.topic_guard.enabled is not False:
+                messages = effective_kwargs.get("messages", [])
+                all_input = "\n".join(m.get("content", "") for m in messages if isinstance(m.get("content"), str))
+                topic_violation_result = check_topic_guard(
+                    all_input,
+                    TopicGuardOptions(
+                        allowed_topics=security.topic_guard.allowed_topics,
+                        blocked_topics=security.topic_guard.blocked_topics,
+                    ),
+                )
+                if topic_violation_result:
+                    self._lp._emit("topic.violated", {"violation": topic_violation_result})
+                    if security.topic_guard.on_violation:
+                        security.topic_guard.on_violation(topic_violation_result)
+                    if security.topic_guard.action != "warn":
+                        raise TopicViolationError(topic_violation_result)
 
         # ── STREAMING SHORTCUT ─────────────────────────────────────
         is_streaming = effective_kwargs.get("stream", False)
@@ -529,6 +646,50 @@ class _WrappedCompletions:
                 if output_content_violations:
                     self._lp._emit("content.violated", {"violations": output_content_violations, "direction": "output"})
 
+            # Post-call: output safety scan
+            if security.output_safety and security.output_safety.enabled is not False and response_text:
+                output_safety_threats = scan_output_safety(
+                    response_text,
+                    OutputSafetyOptions(categories=security.output_safety.categories),
+                )
+                if output_safety_threats:
+                    self._lp._emit("output.unsafe", {"threats": output_safety_threats})
+                    if security.output_safety.on_detect:
+                        security.output_safety.on_detect(output_safety_threats)
+                    if security.output_safety.action == "block":
+                        cats = ", ".join(t.category for t in output_safety_threats)
+                        raise RuntimeError(f"Unsafe output detected: {cats}")
+
+            # Post-call: prompt leakage detection
+            if security.prompt_leakage and security.prompt_leakage.enabled is not False and response_text:
+                prompt_leakage_result = detect_prompt_leakage(
+                    response_text,
+                    PromptLeakageOptions(
+                        system_prompt=security.prompt_leakage.system_prompt,
+                        threshold=security.prompt_leakage.threshold,
+                    ),
+                )
+                if prompt_leakage_result.leaked:
+                    self._lp._emit("prompt.leaked", {"result": prompt_leakage_result})
+                    if security.prompt_leakage.on_detect:
+                        security.prompt_leakage.on_detect(prompt_leakage_result)
+                    if security.prompt_leakage.block_on_leak:
+                        raise RuntimeError(f"System prompt leakage detected (similarity: {prompt_leakage_result.similarity:.2f})")
+
+            # Post-call: secret detection (output)
+            if security.secret_detection and security.secret_detection.enabled is not False and security.secret_detection.scan_response is not False and response_text:
+                output_secret_detections = detect_secrets(
+                    response_text,
+                    SecretDetectionOptions(
+                        built_in_patterns=security.secret_detection.built_in_patterns,
+                        custom_patterns=security.secret_detection.custom_patterns,
+                    ),
+                )
+                if output_secret_detections:
+                    self._lp._emit("secret.detected", {"detections": output_secret_detections, "direction": "output"})
+                    if security.secret_detection.on_detect:
+                        security.secret_detection.on_detect(output_secret_detections)
+
             # Post-call: output schema validation
             if security.output_schema and response_text:
                 validation = validate_output_schema(response_text, security.output_schema)
@@ -578,6 +739,13 @@ class _WrappedCompletions:
                 injection_result, cost_violation,
                 input_content_violations, output_content_violations,
                 redaction_applied,
+                jailbreak_result=jailbreak_result,
+                unicode_scan_result=unicode_scan_result,
+                input_secret_detections=input_secret_detections,
+                output_secret_detections=output_secret_detections,
+                topic_violation_result=topic_violation_result,
+                output_safety_threats=output_safety_threats,
+                prompt_leakage_result=prompt_leakage_result,
             )
         except Exception:
             pass  # SDK must never throw
@@ -597,6 +765,13 @@ class _WrappedCompletions:
         input_violations: Optional[list] = None,
         output_violations: Optional[list] = None,
         redaction_applied: bool = False,
+        jailbreak_result: Optional[JailbreakAnalysis] = None,
+        unicode_scan_result: Optional[UnicodeScanResult] = None,
+        input_secret_detections: Optional[list] = None,
+        output_secret_detections: Optional[list] = None,
+        topic_violation_result: Optional[TopicViolation] = None,
+        output_safety_threats: Optional[list] = None,
+        prompt_leakage_result: Optional[PromptLeakageResult] = None,
     ) -> None:
         usage = getattr(result, "usage", None)
         if usage is None:
@@ -712,6 +887,57 @@ class _WrappedCompletions:
                         (cg_opts.max_cost_per_hour or float("inf")) - self._cost_guard.get_current_hour_spend()
                     ) if cg_opts else 0.0,
                     limit_triggered=cost_violation.type if cost_violation else None,
+                )
+
+            if jailbreak_result and jailbreak_result.risk_score > 0:
+                event.jailbreak_risk = JailbreakRiskPayload(
+                    score=jailbreak_result.risk_score,
+                    triggered=jailbreak_result.triggered,
+                    action=jailbreak_result.action,
+                    decoded_payloads=getattr(jailbreak_result, "decoded_payloads", None),
+                )
+
+            if unicode_scan_result and unicode_scan_result.found:
+                event.unicode_threats = UnicodeThreatsPayload(
+                    found=True,
+                    threat_count=len(unicode_scan_result.threats),
+                    threat_types=list(set(t.type for t in unicode_scan_result.threats)),
+                    action=(security.unicode_sanitizer.action if security.unicode_sanitizer and security.unicode_sanitizer.action else "strip"),
+                )
+
+            in_secrets = input_secret_detections or []
+            out_secrets = output_secret_detections or []
+            if in_secrets or out_secrets:
+                event.secret_detections = SecretDetectionsPayload(
+                    input_count=len(in_secrets),
+                    output_count=len(out_secrets),
+                    types=list(set(d.type for d in in_secrets + out_secrets)),
+                )
+
+            if topic_violation_result:
+                event.topic_violation = TopicViolationPayload(
+                    type=topic_violation_result.type,
+                    topic=topic_violation_result.topic,
+                    matched_keywords=topic_violation_result.matched_keywords,
+                    score=topic_violation_result.score,
+                )
+
+            safety_threats = output_safety_threats or []
+            if safety_threats:
+                event.output_safety = OutputSafetyPayload(
+                    threat_count=len(safety_threats),
+                    categories=list(set(t.category for t in safety_threats)),
+                    threats=[
+                        {"category": t.category, "matched": t.matched, "severity": t.severity}
+                        for t in safety_threats
+                    ],
+                )
+
+            if prompt_leakage_result and prompt_leakage_result.leaked:
+                event.prompt_leakage = PromptLeakagePayload(
+                    leaked=True,
+                    similarity=prompt_leakage_result.similarity,
+                    meta_response_detected=prompt_leakage_result.meta_response_detected,
                 )
 
         self._lp._batcher.enqueue(event)

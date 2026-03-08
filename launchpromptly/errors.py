@@ -6,8 +6,10 @@ if TYPE_CHECKING:
     from ._internal.content_filter import ContentViolation
     from ._internal.cost_guard import BudgetViolation
     from ._internal.injection import InjectionAnalysis
+    from ._internal.jailbreak import JailbreakAnalysis
     from ._internal.model_policy import ModelPolicyViolation
     from ._internal.schema_validator import SchemaValidationError
+    from ._internal.topic_guard import TopicViolation
     from .types import StreamViolation
 
 
@@ -62,6 +64,26 @@ class OutputSchemaError(Exception):
         self.response_text = response_text
         summary = "; ".join(e.message for e in validation_errors[:3])
         super().__init__(f"Output schema validation failed: {summary}")
+
+
+class JailbreakError(Exception):
+    """Raised when jailbreak attempt is detected above the block threshold."""
+
+    def __init__(self, analysis: JailbreakAnalysis) -> None:
+        self.analysis = analysis
+        super().__init__(
+            f"Jailbreak detected (risk: {analysis.risk_score}, "
+            f"categories: {', '.join(analysis.triggered)})"
+        )
+
+
+class TopicViolationError(Exception):
+    """Raised when a topic guard violation is detected."""
+
+    def __init__(self, violation: TopicViolation) -> None:
+        self.violation = violation
+        topic_info = f" -- {violation.topic}" if violation.topic else ""
+        super().__init__(f"Topic violation: {violation.type}{topic_info}")
 
 
 class StreamAbortError(Exception):
