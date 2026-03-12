@@ -410,6 +410,39 @@ All ML inference runs locally — no data leaves your infrastructure.
 | `MLInjectionDetector` | `protectai/deberta-v3-base-prompt-injection-v2` | Semantic prompt injection (catches obfuscated/encoded attacks) |
 | `PresidioPIIDetector` | Microsoft Presidio + spaCy | Person names, organization names, locations, medical records |
 
+## Privacy & data practices
+
+### What the SDK reports
+
+Events sent to your LaunchPromptly endpoint contain metadata only:
+
+- Token counts (input, output, total)
+- Model name (e.g. `gpt-4o`)
+- Estimated cost (USD)
+- Latency (ms)
+- Guardrail trigger types and counts (e.g. "2 PII detections", "injection blocked")
+- Injection risk score
+- Whether redaction was applied (boolean)
+- Timestamps
+- Customer ID and feature name (if you provided them)
+
+### What the SDK does not send
+
+- Prompt text or response text (by default)
+- PII values (emails, SSNs, phone numbers, etc.)
+- Raw user content
+- API keys or secrets
+- File uploads or attachments
+- IP addresses of your end users
+
+### Optional fields
+
+You can opt in to sending `prompt_preview` and `response_text` for debugging. When enabled, these are encrypted with AES-256-GCM at rest on the dashboard. They are never stored in plaintext.
+
+### No telemetry
+
+The SDK does not phone home. It makes no analytics, tracking, or telemetry calls to LaunchPromptly. Events go to your configured endpoint only. If you don't set an endpoint, no network calls happen at all.
+
 ## Environment Variables
 
 | Variable | Description |
