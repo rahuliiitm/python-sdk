@@ -8,9 +8,18 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Protocol
 
 MAX_SCAN_LENGTH = 1024 * 1024  # 1 MB
+
+
+class SecretDetectorProvider(Protocol):
+    """Provider interface for pluggable secret detectors (e.g., ML plugin)."""
+
+    def detect(self, text: str, options: Optional["SecretDetectionOptions"] = None) -> List["SecretDetection"]: ...
+
+    @property
+    def name(self) -> str: ...
 
 
 @dataclass
@@ -62,7 +71,20 @@ _PATTERNS: List[_PatternEntry] = [
     _PatternEntry("private_key", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"), 0.99),
     _PatternEntry("connection_string", re.compile(r"(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis|amqp)://[^\s\"']+"), 0.90),
     _PatternEntry("webhook_url", re.compile(r"https?://hooks\.(?:slack|discord)\.com/[^\s]+"), 0.85),
-    _PatternEntry("generic_high_entropy", re.compile(r"(?:secret|key|token|password|api_key|apikey)[\s:=\"']*[A-Za-z0-9/+=]{32,}", re.IGNORECASE), 0.70),
+    _PatternEntry("gcp_api_key", re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b"), 0.95),
+    _PatternEntry("npm_token", re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"), 0.95),
+    _PatternEntry("docker_pat", re.compile(r"\bdckr_pat_[A-Za-z0-9_\-]{30,}\b"), 0.95),
+    _PatternEntry("basic_auth", re.compile(r"\bBasic\s+[A-Za-z0-9+/]{20,}={0,2}\b"), 0.80),
+    _PatternEntry(
+        "credential_assignment",
+        re.compile(
+            r"(?:^|[\s;,{(])[A-Za-z_]*(?:PASSWORD|SECRET|CREDENTIAL|PASSPHRASE|AUTH_TOKEN|PRIVATE_KEY)"
+            r"[A-Za-z_0-9]*\s*[=:]\s*['\"`]([^'\"`\n]{1,200})['\"`]",
+            re.IGNORECASE | re.MULTILINE,
+        ),
+        0.85,
+    ),
+    _PatternEntry("generic_high_entropy", re.compile(r"(?:secret|key|token|password|api_key|apikey)[\s:=\"']*[A-Za-z0-9/+=\-_]{32,}", re.IGNORECASE), 0.70),
 ]
 
 
@@ -146,3 +168,17 @@ def _deduplicate_detections(sorted_detections: List[SecretDetection]) -> List[Se
             result.append(curr)
 
     return result
+
+
+def merge_secret_detections(*arrays: List[SecretDetection]) -> List[SecretDetection]:
+    """Merge secret detections from multiple sources (built-in + providers).
+
+    Concatenates, sorts by start, and deduplicates overlapping detections.
+    """
+    all_dets: List[SecretDetection] = []
+    for arr in arrays:
+        all_dets.extend(arr)
+    if not all_dets:
+        return []
+    all_dets.sort(key=lambda d: (d.start, -d.confidence))
+    return _deduplicate_detections(all_dets)

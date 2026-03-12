@@ -200,6 +200,7 @@ class StreamGuardEngine:
         pii_providers: Optional[list] = None,
         injection_block_threshold: Optional[float] = None,
         extract_text: Callable[[Any], Optional[str]],
+        on_complete: Optional[Callable[["StreamSecurityReport"], None]] = None,
     ) -> None:
         self._scan_interval: int = getattr(stream_guard, "scan_interval", 500)
         self._window_overlap: int = getattr(stream_guard, "window_overlap", 200)
@@ -217,6 +218,7 @@ class StreamGuardEngine:
         self._pii_providers = pii_providers
         self._injection_block_threshold = injection_block_threshold
         self._extract_text = extract_text
+        self._on_complete = on_complete
 
         # State
         self._buffer = ""
@@ -378,6 +380,11 @@ class StreamGuardEngine:
         if self._do_final_scan and not self._aborted:
             self._final_scan()
         self._build_report()
+        if self._on_complete and self._report is not None:
+            try:
+                self._on_complete(self._report)
+            except Exception:
+                pass  # SDK must never throw
 
     def _build_report(self) -> None:
         """Build the security report from accumulated state."""

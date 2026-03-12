@@ -62,13 +62,20 @@ _RULES: List[_InjectionRule] = [
     _InjectionRule(
         category="role_manipulation",
         patterns=[
-            re.compile(r"you\s+are\s+now\s+(?:a|an|the)\s+", re.IGNORECASE),
+            re.compile(r"you\s+are\s+now\s+(?:(?:a|an|the)\s+)?\w+", re.IGNORECASE),
             re.compile(r"(?:act|behave)\s+as\s+(?:if\s+)?(?:you\s+(?:are|were)\s+)?", re.IGNORECASE),
             re.compile(r"pretend\s+(?:you\s+are|to\s+be)", re.IGNORECASE),
             re.compile(r"(?:new|switch|change)\s+(?:your\s+)?(?:persona|personality|character|role)", re.IGNORECASE),
             re.compile(r"from\s+now\s+on\s+you\s+(?:are|will)", re.IGNORECASE),
             re.compile(r"jailbreak", re.IGNORECASE),
-            re.compile(r"DAN\s+mode", re.IGNORECASE),
+            re.compile(r"(?:DAN|STAN|DUDE|AIM|DEV)\s*(?:mode|prompt|enabled?|activated?)", re.IGNORECASE),
+            re.compile(r"(?:enter|enable|activate|switch\s+to)\s+(?:\w+\s+)?(?:mode|persona)", re.IGNORECASE),
+            re.compile(
+                r"(?:write\s+a\s+(?:story|scene|chapter|script)\s+(?:where|in\s+which)"
+                r"|in\s+a\s+(?:fictional|hypothetical)\s+(?:world|scenario))"
+                r"\s+.{0,80}(?:explain|describe|demonstrate|show)\s+how",
+                re.IGNORECASE,
+            ),
         ],
         weight=0.35,
     ),
@@ -109,8 +116,8 @@ _RULES: List[_InjectionRule] = [
     _InjectionRule(
         category="encoding_evasion",
         patterns=[
-            # Base64 blocks (64+ chars of base64 alphabet)
-            re.compile(r"[A-Za-z0-9+/=]{64,}"),
+            # Base64 blocks (32+ chars of base64 alphabet)
+            re.compile(r"[A-Za-z0-9+/=]{32,}"),
             # Excessive Unicode escape sequences
             re.compile(r"(?:\\u[0-9a-fA-F]{4}\s*){4,}"),
             # ROT13 instruction pattern

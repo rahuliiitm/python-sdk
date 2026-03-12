@@ -29,6 +29,10 @@ ml = [
     "transformers>=4.30.0",
     "torch>=2.0.0",
 ]
+ml-light = [
+    "transformers>=4.30.0",
+    "onnxruntime>=1.16.0",
+]
 
 [project.urls]
 Homepage = "https://launchpromptly.dev"

@@ -10,6 +10,7 @@ This package provides three ML-powered providers that can be used alongside
 
 * :class:`PresidioPIIDetector` -- NER-based PII detection (Microsoft Presidio)
 * :class:`MLInjectionDetector` -- Transformer-based prompt injection detection
+* :class:`MLJailbreakDetector` -- Transformer-based jailbreak detection
 * :class:`MLToxicityDetector` -- Transformer-based toxicity / content-safety detection
 
 Each provider satisfies the corresponding Protocol interface defined in the
@@ -52,6 +53,22 @@ except ImportError as exc:
 
 
 try:
+    from .jailbreak_detector import MLJailbreakDetector
+except ImportError as exc:
+    _import_errors["MLJailbreakDetector"] = str(exc)
+
+    class MLJailbreakDetector:  # type: ignore[no-redef]
+        """Placeholder that raises when transformers deps are missing."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "MLJailbreakDetector requires transformers. "
+                f"Install with: pip install launchpromptly[ml]\n"
+                f"Original error: {_import_errors['MLJailbreakDetector']}"
+            )
+
+
+try:
     from .toxicity_detector import MLToxicityDetector
 except ImportError as exc:
     _import_errors["MLToxicityDetector"] = str(exc)
@@ -70,5 +87,6 @@ except ImportError as exc:
 __all__ = [
     "PresidioPIIDetector",
     "MLInjectionDetector",
+    "MLJailbreakDetector",
     "MLToxicityDetector",
 ]

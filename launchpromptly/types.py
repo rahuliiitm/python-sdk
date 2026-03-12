@@ -85,6 +85,8 @@ class SecretDetectionSecurityOptions:
     enabled: Optional[bool] = None
     built_in_patterns: Optional[bool] = None
     custom_patterns: Optional[List[CustomSecretPattern]] = None
+    providers: Optional[List[Any]] = None
+    """Pluggable secret detection providers (e.g., ML-based)."""
     scan_response: Optional[bool] = None
     action: Optional[Literal["warn", "block", "redact"]] = None
     on_detect: Optional[Callable[[List[SecretDetection]], None]] = None

@@ -31,7 +31,7 @@ from ._internal.redaction import redact_pii, de_redact, RedactionOptions
 from ._internal.injection import detect_injection, merge_injection_analyses, InjectionAnalysis, InjectionOptions
 from ._internal.jailbreak import detect_jailbreak, merge_jailbreak_analyses, JailbreakAnalysis, JailbreakOptions
 from ._internal.unicode_sanitizer import scan_unicode, UnicodeScanResult, UnicodeSanitizeOptions
-from ._internal.secret_detection import detect_secrets, SecretDetection, SecretDetectionOptions
+from ._internal.secret_detection import detect_secrets, merge_secret_detections, SecretDetection, SecretDetectionOptions
 from ._internal.topic_guard import check_topic_guard, TopicViolation, TopicGuardOptions
 from ._internal.output_safety import scan_output_safety, OutputSafetyThreat, OutputSafetyOptions
 from ._internal.prompt_leakage import detect_prompt_leakage, PromptLeakageResult, PromptLeakageOptions
@@ -229,6 +229,50 @@ class LaunchPromptly:
         return wrap_gemini_client(client, self, opts)
 
     # ── Flush / Destroy / Shutdown ─────────────────────────────────────────────
+
+    async def report_feedback(
+        self,
+        event_id: str,
+        *,
+        guardrail_type: str,
+        original_action: str,
+        feedback: str,
+        notes: str | None = None,
+    ) -> None:
+        """Report feedback on a guardrail detection to improve future accuracy.
+
+        Args:
+            event_id: The event ID from the dashboard or event payload.
+            guardrail_type: One of 'injection', 'jailbreak', 'pii', 'content'.
+            original_action: What the SDK decided: 'allow', 'warn', or 'block'.
+            feedback: 'correct', 'false_positive', or 'false_negative'.
+            notes: Optional free-text note.
+        """
+        import json
+        from urllib.request import Request, urlopen
+
+        payload = {
+            "eventId": event_id,
+            "guardrailType": guardrail_type,
+            "originalAction": original_action,
+            "feedback": feedback,
+        }
+        if notes:
+            payload["notes"] = notes
+
+        req = Request(
+            f"{self._endpoint}/v1/security/feedback/report",
+            data=json.dumps(payload).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}",
+            },
+            method="POST",
+        )
+        try:
+            urlopen(req, timeout=10)  # noqa: S310
+        except Exception:
+            pass  # Fire-and-forget — feedback is non-critical
 
     async def flush(self) -> None:
         """Flush all pending events to the API."""
@@ -454,6 +498,14 @@ class _WrappedCompletions:
                         custom_patterns=security.secret_detection.custom_patterns,
                     ),
                 )
+                # Merge with provider detections
+                if security.secret_detection.providers:
+                    for p in security.secret_detection.providers:
+                        try:
+                            provider_dets = p.detect(all_input)
+                            input_secret_detections = merge_secret_detections(input_secret_detections, provider_dets)
+                        except Exception:
+                            pass
                 if input_secret_detections:
                     self._lp._emit("secret.detected", {"detections": input_secret_detections, "direction": "input"})
                     if security.secret_detection.on_detect:
@@ -577,6 +629,16 @@ class _WrappedCompletions:
             # Use StreamGuardEngine if stream_guard is configured
             if security and security.stream_guard:
                 from ._internal.streaming import _extract_openai_chunk_text
+
+                # Build cost-recording callback for streaming
+                _cost_guard = self._cost_guard
+                _model = effective_kwargs.get("model", "unknown")
+
+                def _on_stream_complete(report: Any) -> None:
+                    if _cost_guard and report.approximate_tokens > 0:
+                        cost = calculate_event_cost("openai", _model, 0, report.approximate_tokens)
+                        _cost_guard.record_cost(cost)
+
                 engine = StreamGuardEngine(
                     stream_guard=security.stream_guard,
                     pii_types=security.pii.types if security.pii else None,
@@ -586,6 +648,7 @@ class _WrappedCompletions:
                         if security.injection else None
                     ),
                     extract_text=_extract_openai_chunk_text,
+                    on_complete=_on_stream_complete,
                 )
                 return engine.wrap(raw_stream)
 
@@ -686,6 +749,13 @@ class _WrappedCompletions:
                         custom_patterns=security.secret_detection.custom_patterns,
                     ),
                 )
+                if security.secret_detection.providers:
+                    for p in security.secret_detection.providers:
+                        try:
+                            provider_dets = p.detect(response_text)
+                            output_secret_detections = merge_secret_detections(output_secret_detections, provider_dets)
+                        except Exception:
+                            pass
                 if output_secret_detections:
                     self._lp._emit("secret.detected", {"detections": output_secret_detections, "direction": "output"})
                     if security.secret_detection.on_detect:

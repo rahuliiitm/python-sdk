@@ -69,6 +69,24 @@ _CATEGORY_RULES: List[_CategoryRule] = [
             re.compile(r"\b(?:racial|ethnic)\s+(?:cleansing|supremacy|genocide)\b", re.IGNORECASE),
             re.compile(r"\bgenocide\b", re.IGNORECASE),
             re.compile(r"\bhate\s+(?:crime|group)\b", re.IGNORECASE),
+            re.compile(
+                r"\b(?:attack|destroy|wipe\s+out|bomb|nuke|annihilate)\s+(?:\w+\s+){0,3}"
+                r"(?:and\s+(?:its|their)\s+)?(?:people|civilians|citizens|population)\b",
+                re.IGNORECASE,
+            ),
+        ],
+        severity="block",
+    ),
+    _CategoryRule(
+        category="sexual",
+        patterns=[
+            re.compile(r"\b(?:child|minor|underage)\s+(?:sexual|explicit|nude|naked|porn)\b", re.IGNORECASE),
+            re.compile(r"\b(?:CSAM|child\s+pornography|child\s+exploitation)\b", re.IGNORECASE),
+            re.compile(
+                r"\b(?:generate|create|write|produce)\s+(?:sexual|explicit|erotic|nude)"
+                r"\s+(?:content|image|video|story)\s+(?:of|about|involving)\s+(?:a\s+)?(?:child|minor|kid|teen)\b",
+                re.IGNORECASE,
+            ),
         ],
         severity="block",
     ),
@@ -76,8 +94,15 @@ _CATEGORY_RULES: List[_CategoryRule] = [
         category="violence",
         patterns=[
             re.compile(r"\b(?:how\s+to\s+)?(?:make|build|create)\s+(?:a\s+)?(?:bomb|explosive|weapon)\b", re.IGNORECASE),
-            re.compile(r"\b(?:how\s+to\s+)?(?:poison|assassinate|murder)\s+(?:someone|a\s+person)\b", re.IGNORECASE),
+            re.compile(r"\b(?:how\s+to\s+)?(?:poison|assassinate|murder)\s+(?:someone|a\s+person|people)\b", re.IGNORECASE),
             re.compile(r"\bmass\s+(?:shooting|murder|violence)\b", re.IGNORECASE),
+            re.compile(r"\b(?:how\s+to\s+)?(?:stab|shoot|strangle|behead|torture)\s+(?:someone|a\s+person|people)\b", re.IGNORECASE),
+            re.compile(
+                r"\b(?:how\s+to\s+)?(?:synthesize|produce|make|create)\s+(?:chlorine|sarin|ricin|anthrax|mustard|nerve)"
+                r"\s+(?:gas|agent|toxin|poison)?\b",
+                re.IGNORECASE,
+            ),
+            re.compile(r"\b(?:pipe\s+bomb|IED|improvised\s+explosive|car\s+bomb|suicide\s+vest|dirty\s+bomb)\b", re.IGNORECASE),
         ],
         severity="block",
     ),
@@ -86,6 +111,14 @@ _CATEGORY_RULES: List[_CategoryRule] = [
         patterns=[
             re.compile(r"\b(?:how\s+to\s+)?(?:commit|method(?:s)?\s+(?:of|for))\s+suicide\b", re.IGNORECASE),
             re.compile(r"\bways\s+to\s+(?:end\s+(?:my|your)\s+life|kill\s+(?:myself|yourself))\b", re.IGNORECASE),
+            re.compile(r"\b(?:how\s+to\s+)?(?:overdose|OD)\s+on\s+\w+", re.IGNORECASE),
+            re.compile(
+                r"\bwhat\s+(?:pills?|dose|amount|medication)\s+(?:(?:would|will|to|can)\s+)?"
+                r"(?:kill|harm|hurt)\s+(?:me|myself|someone)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(r"\b(?:best|easy|painless)\s+(?:way|method)s?\s+to\s+(?:die|end\s+(?:it|my\s+life)|kill\s+myself)\b", re.IGNORECASE),
+            re.compile(r"\b(?:self[-\s]?harm|self[-\s]?injur|cutting)\s+(?:method|how|tips|guide|tutorial)\b", re.IGNORECASE),
         ],
         severity="block",
     ),
@@ -94,11 +127,23 @@ _CATEGORY_RULES: List[_CategoryRule] = [
         patterns=[
             re.compile(
                 r"\b(?:how\s+to\s+)?(?:hack|breach|exploit)\s+(?:into\s+)?(?:a\s+)?(?:bank|government|corporate)"
-                r"\s+(?:system|network|database)\b",
+                r"\s+(?:system|network|database|account)\b",
                 re.IGNORECASE,
             ),
             re.compile(r"\b(?:how\s+to\s+)?(?:launder|counterfeit)\s+money\b", re.IGNORECASE),
             re.compile(r"\b(?:how\s+to\s+)?(?:cook|manufacture|synthesize)\s+(?:meth|drugs|fentanyl)\b", re.IGNORECASE),
+            re.compile(
+                r"\b(?:write|create|generate|build|make)\s+(?:a\s+)?(?:phishing|spear[\s-]?phishing|scam|fraud)"
+                r"\s+(?:email|message|page|site|campaign)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?:write|create|build|make|develop)\s+(?:a\s+)?"
+                r"(?:malware|ransomware|keylogger|trojan|spyware|virus|rootkit|worm|botnet)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(r"\b(?:how\s+to\s+)?(?:doxx?|stalk)\s+(?:someone|a\s+person)\b", re.IGNORECASE),
+            re.compile(r"\b(?:how\s+to\s+)?(?:smuggle|traffic)\s+(?:drugs|people|weapons|guns|arms)\b", re.IGNORECASE),
         ],
         severity="block",
     ),

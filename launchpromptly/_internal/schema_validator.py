@@ -240,11 +240,22 @@ def validate_output_schema(
     """
     try:
         parsed = json.loads(response_text)
-    except (json.JSONDecodeError, ValueError) as e:
-        errs = [SchemaValidationError(path="/", message=f"Invalid JSON: {e}")]
-        if options.on_invalid:
-            options.on_invalid(errs)
-        return OutputValidationResult(valid=False, errors=errs)
+    except (json.JSONDecodeError, ValueError):
+        # Try extracting JSON from markdown code fences (```json ... ```)
+        fence_match = re.search(r"```(?:json)?\s*\n?([\s\S]*?)```", response_text)
+        if fence_match:
+            try:
+                parsed = json.loads(fence_match.group(1).strip())
+            except (json.JSONDecodeError, ValueError) as e2:
+                errs = [SchemaValidationError(path="/", message=f"Invalid JSON: {e2}")]
+                if options.on_invalid:
+                    options.on_invalid(errs)
+                return OutputValidationResult(valid=False, errors=errs)
+        else:
+            errs = [SchemaValidationError(path="/", message="Invalid JSON: response is not valid JSON and contains no markdown code fence")]
+            if options.on_invalid:
+                options.on_invalid(errs)
+            return OutputValidationResult(valid=False, errors=errs)
 
     errs = validate_schema(parsed, options.schema)
     if errs and options.on_invalid:

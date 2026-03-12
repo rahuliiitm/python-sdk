@@ -62,7 +62,7 @@ _PHONE_US_RE = re.compile(
 
 # Python re requires fixed-width lookbehinds; use (?:^|(?<=[\s(])) instead
 _PHONE_INTL_RE = re.compile(
-    r"(?:(?<=\s)|(?<=\()|(?<=^))\+\d{1,3}[-.\s]?\d{4,14}(?:[-.\s]\d{1,6})*\b",
+    r"(?:(?<=\s)|(?<=\()|(?<=^))\+\d{1,3}[-.\s]?(?:[-.\s]?\d{2,6}){2,5}\b",
     re.MULTILINE,
 )
 
@@ -75,6 +75,12 @@ _IP_V4_RE = re.compile(
     r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\."
     r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\."
     r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
+)
+
+_IP_V6_RE = re.compile(
+    r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b"
+    r"|(?:[0-9a-fA-F]{1,4}:){1,7}:"
+    r"|::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}\b"
 )
 
 # Common API key / secret patterns
@@ -91,7 +97,12 @@ _API_KEY_RE = re.compile(
 )
 
 _DATE_OF_BIRTH_RE = re.compile(
-    r"\b(?:0[1-9]|1[0-2])[\/\-](?:0[1-9]|[12]\d|3[01])[\/\-](?:19|20)\d{2}\b"
+    r"\b(?:(?:0[1-9]|1[0-2])[\/\-](?:0[1-9]|[12]\d|3[01])"
+    r"|(?:0[1-9]|[12]\d|3[01])[\/\-](?:0[1-9]|1[0-2]))[\/\-](?:19|20)\d{2}\b"
+)
+
+_DATE_OF_BIRTH_ISO_RE = re.compile(
+    r"\b(?:19|20)\d{2}[\/\-](?:0[1-9]|1[0-2])[\/\-](?:0[1-9]|[12]\d|3[01])\b"
 )
 
 _US_ADDRESS_RE = re.compile(
@@ -103,7 +114,7 @@ _US_ADDRESS_RE = re.compile(
 
 # -- International PII patterns ------------------------------------------------
 
-_IBAN_RE = re.compile(r'\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}([A-Z0-9]?){0,16}\b')
+_IBAN_RE = re.compile(r'\b[A-Z]{2}\d{2}\s?[A-Z0-9]{4}\s?\d{4}\s?\d{4}\s?[\dA-Z\s]{0,20}\b')
 
 _NHS_NUMBER_RE = re.compile(r'\b\d{3}\s?\d{3}\s?\d{4}\b')
 
@@ -156,7 +167,12 @@ def _nhs_check(value: str) -> bool:
 
 def _aadhaar_check(value: str) -> bool:
     digits = re.sub(r"\s", "", value)
-    return len(digits) == 12 and digits.isdigit()
+    if len(digits) != 12 or not digits.isdigit():
+        return False
+    # Aadhaar numbers start with 2-9 (never 0 or 1)
+    if digits[0] in ('0', '1'):
+        return False
+    return True
 
 
 # -- SSN validation (area/group/serial checks) --------------------------------
@@ -410,6 +426,12 @@ _PATTERNS: List[_PatternEntry] = [
     _PatternEntry(type="eu_phone", regex=_EU_PHONE_RE, confidence=0.8),
     _PatternEntry(type="medicare", regex=_MEDICARE_AU_RE, confidence=0.75, validate=_medicare_context_check),
     _PatternEntry(type="drivers_license", regex=_DRIVERS_LICENSE_US_RE, confidence=0.75),
+    _PatternEntry(
+        type="ip_address",
+        regex=_IP_V6_RE,
+        confidence=0.8,
+    ),
+    _PatternEntry(type="date_of_birth", regex=_DATE_OF_BIRTH_ISO_RE, confidence=0.7, validate=_dob_context_check),
 ]
 
 

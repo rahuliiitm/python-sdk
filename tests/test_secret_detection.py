@@ -239,8 +239,9 @@ def test_detects_api_key_with_long_value():
 def test_detects_secret_with_long_value():
     long_value = "x" * 32
     result = detect_secrets(f'secret="{long_value}"')
-    generic = [d for d in result if d.type == "generic_high_entropy"]
-    assert len(generic) == 1
+    # credential_assignment may win deduplication over generic_high_entropy
+    matched = [d for d in result if d.type in ("generic_high_entropy", "credential_assignment")]
+    assert len(matched) == 1
 
 
 def test_detects_token_with_long_value():

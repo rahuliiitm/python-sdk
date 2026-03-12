@@ -101,7 +101,7 @@ def test_mask_ssn_preserves_format():
 
 def test_mask_generic_shows_suffix():
     result = redact_pii(
-        "Server at 203.0.113.42",
+        "Server at 82.45.113.42",
         RedactionOptions(strategy="mask"),
     )
     ips = [d for d in result.detections if d.type == "ip_address"]

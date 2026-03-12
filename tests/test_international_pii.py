@@ -123,7 +123,7 @@ def test_no_false_positive_aadhaar_on_8_digits():
 
 def test_detects_german_phone():
     result = detect_pii("Call +49 30 1234567")
-    phones = [d for d in result if d.type == "eu_phone"]
+    phones = [d for d in result if d.type in ("eu_phone", "phone")]
     assert len(phones) == 1
     assert phones[0].confidence == 0.8
 

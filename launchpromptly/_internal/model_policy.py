@@ -52,7 +52,7 @@ def check_model_policy(
 
     # 1. Model whitelist
     if options.allowed_models:
-        if model not in options.allowed_models:
+        if not any(model == m or model.startswith(m + '-') for m in options.allowed_models):
             return ModelPolicyViolation(
                 rule="model_not_allowed",
                 message=f'Model "{model}" is not in the allowed list: {", ".join(options.allowed_models)}',
