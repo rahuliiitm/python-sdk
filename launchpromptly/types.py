@@ -37,7 +37,7 @@ class RequestContext:
 @dataclass
 class LaunchPromptlyOptions:
     api_key: Optional[str] = None
-    endpoint: str = "https://launchpromptly-api-950530830180.us-west1.run.app"
+    endpoint: str = "https://api.launchpromptly.dev"
     flush_at: int = 10
     flush_interval: float = 5.0  # seconds
     on: Optional[GuardrailEventHandlers] = None  # guardrail event handlers
