@@ -110,6 +110,7 @@ _CATEGORY_RULES: List[_CategoryRule] = [
         category="self_harm",
         patterns=[
             re.compile(r"\b(?:how\s+to\s+)?(?:commit|method(?:s)?\s+(?:of|for))\s+suicide\b", re.IGNORECASE),
+            re.compile(r"\b(?:want|need|going)\s+to\s+(?:end|take)\s+(?:my|this|his|her|their)\s+life\b", re.IGNORECASE),
             re.compile(r"\bways\s+to\s+(?:end\s+(?:my|your)\s+life|kill\s+(?:myself|yourself))\b", re.IGNORECASE),
             re.compile(r"\b(?:how\s+to\s+)?(?:overdose|OD)\s+on\s+\w+", re.IGNORECASE),
             re.compile(
@@ -118,6 +119,8 @@ _CATEGORY_RULES: List[_CategoryRule] = [
                 re.IGNORECASE,
             ),
             re.compile(r"\b(?:best|easy|painless)\s+(?:way|method)s?\s+to\s+(?:die|end\s+(?:it|my\s+life)|kill\s+myself)\b", re.IGNORECASE),
+            re.compile(r"\b(?:don'?t|do\s+not)\s+want\s+to\s+(?:live|be\s+alive|exist)\b", re.IGNORECASE),
+            re.compile(r"\b(?:kill|harm|hurt)\s+(?:myself|themselves|himself|herself)\b", re.IGNORECASE),
             re.compile(r"\b(?:self[-\s]?harm|self[-\s]?injur|cutting)\s+(?:method|how|tips|guide|tutorial)\b", re.IGNORECASE),
         ],
         severity="block",
