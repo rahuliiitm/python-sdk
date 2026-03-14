@@ -21,12 +21,17 @@ class JailbreakAnalysis:
     decoded_payloads: Optional[List[str]] = None
 
 
+MergeStrategy = Literal["max", "weighted_average", "unanimous"]
+
+
 @dataclass
 class JailbreakOptions:
     """Options for jailbreak detection."""
 
     warn_threshold: Optional[float] = None  # default: 0.3
     block_threshold: Optional[float] = None  # default: 0.7
+    system_prompt: Optional[str] = None  # system prompt for persona suppression
+    merge_strategy: Optional[MergeStrategy] = None  # default: 'max'
 
 
 class JailbreakDetectorProvider(Protocol):
@@ -55,7 +60,8 @@ _KNOWN_TEMPLATE_PATTERNS: List[re.Pattern[str]] = [
     re.compile(r"Developer\s+Mode", re.IGNORECASE),
     re.compile(r"Evil\s+Confidant", re.IGNORECASE),
     re.compile(r"BetterDAN", re.IGNORECASE),
-    re.compile(r"\bMaximum\b", re.IGNORECASE),
+    # Require "Maximum" to be followed by a jailbreak-related word to avoid FP on "maximum capacity"
+    re.compile(r"\bMaximum\b\s+(?:mode|override|power|token|capability|freedom|unrestricted)", re.IGNORECASE),
     re.compile(r"Do\s+Anything\s+Now", re.IGNORECASE),
     re.compile(r"Superior\s+AI", re.IGNORECASE),
     re.compile(r"developer\s+mode\s+enabled", re.IGNORECASE),
@@ -126,6 +132,57 @@ _RULES: List[_JailbreakRule] = [
         weight=0.3,
     ),
 ]
+
+
+# -- Suppressive context: benign phrases that look like jailbreak patterns -----
+
+_SUPPRESSIONS: dict[str, re.Pattern[str]] = {
+    # "you are now" — benign when followed by status/state words
+    "persona_assignment:you_are_now": re.compile(
+        r"you\s+are\s+now\s+(?:connected|logged\s+in|enrolled|registered|signed\s+up|"
+        r"subscribed|verified|approved|ready|eligible|qualified|redirected|transferred|"
+        r"being\s+transferred|on\s+(?:the|a)\s+(?:waitlist|list|call)|part\s+of|able\s+to|"
+        r"set\s+up|all\s+set|good\s+to\s+go|in\s+(?:the|a)\s+(?:queue|line|group|meeting|session))",
+        re.IGNORECASE,
+    ),
+}
+
+
+def _should_suppress(category: str, text: str, match_index: int) -> bool:
+    """Check whether a match should be suppressed due to benign context."""
+    start = max(0, match_index - 40)
+    end = min(len(text), match_index + 120)
+    context = text[start:end]
+
+    for key, suppress_re in _SUPPRESSIONS.items():
+        if key.startswith(category + ":") and suppress_re.search(context):
+            return True
+    return False
+
+
+# -- System prompt awareness (re-use extraction from injection module) ---------
+
+from .injection import extract_system_roles, _extract_role_noun, _extract_full_role_phrase
+
+
+def _is_consistent_with_system(
+    text: str, match_index: int, match_length: int, system_roles: list[str],
+) -> bool:
+    """Check if a matched persona phrase is consistent with one of the system prompt roles."""
+    if not system_roles:
+        return False
+    full_phrase = _extract_full_role_phrase(text, match_index, match_length)
+    match_noun = _extract_role_noun(full_phrase)
+    if not match_noun or len(match_noun) < 3:
+        return False
+
+    for role in system_roles:
+        role_noun = _extract_role_noun(role)
+        if not role_noun:
+            continue
+        if role_noun in match_noun or match_noun in role_noun:
+            return True
+    return False
 
 
 # -- Base64 payload decoding ---------------------------------------------------
@@ -201,6 +258,10 @@ def detect_jailbreak(
     warn_threshold = (options.warn_threshold if options and options.warn_threshold is not None else 0.3)
     block_threshold = (options.block_threshold if options and options.block_threshold is not None else 0.7)
 
+    # Extract system roles for consistent-role suppression
+    system_prompt = options.system_prompt if options else None
+    system_roles = extract_system_roles(system_prompt) if system_prompt else []
+
     triggered: List[str] = []
     decoded_payloads: List[str] = []
 
@@ -213,7 +274,18 @@ def detect_jailbreak(
         match_count = 0
 
         for pattern in rule.patterns:
-            if pattern.search(scan_text):
+            m = pattern.search(scan_text)
+            if m:
+                # Check suppressive context before counting this match
+                if _should_suppress(rule.category, scan_text, m.start()):
+                    continue
+                # Check system prompt consistency for persona_assignment
+                if (
+                    rule.category == "persona_assignment"
+                    and system_roles
+                    and _is_consistent_with_system(scan_text, m.start(), len(m.group(0)), system_roles)
+                ):
+                    continue
                 rule_triggered = True
                 match_count += 1
 
@@ -271,21 +343,38 @@ def detect_jailbreak(
     return result
 
 
+def _merge_scores(scores: List[float], strategy: str) -> float:
+    """Merge multiple risk scores according to the selected strategy."""
+    if len(scores) <= 1:
+        return scores[0] if scores else 0.0
+
+    if strategy == "weighted_average":
+        rule_weight = 0.6
+        ml_weight = 0.4 / (len(scores) - 1)
+        return scores[0] * rule_weight + sum(s * ml_weight for s in scores[1:])
+    elif strategy == "unanimous":
+        return min(scores)
+    else:  # 'max'
+        return max(scores)
+
+
 def merge_jailbreak_analyses(
     analyses: List[JailbreakAnalysis],
     options: Optional[JailbreakOptions] = None,
 ) -> JailbreakAnalysis:
     """Merge results from multiple jailbreak detectors.
 
-    Takes the maximum risk score and unions all triggered categories.
+    Uses the selected merge strategy (default: 'max') and unions all triggered categories.
     """
     if not analyses:
         return JailbreakAnalysis(risk_score=0.0, triggered=[], action="allow")
 
     warn_threshold = (options.warn_threshold if options and options.warn_threshold is not None else 0.3)
     block_threshold = (options.block_threshold if options and options.block_threshold is not None else 0.7)
+    strategy = (options.merge_strategy if options and options.merge_strategy else "max")
 
-    max_score = max(a.risk_score for a in analyses)
+    scores = [a.risk_score for a in analyses]
+    merged_score = round(_merge_scores(scores, strategy) * 100) / 100
     all_triggered = list(dict.fromkeys(
         cat for a in analyses for cat in a.triggered
     ))
@@ -293,14 +382,14 @@ def merge_jailbreak_analyses(
         p for a in analyses if a.decoded_payloads for p in a.decoded_payloads
     ))
 
-    if max_score >= block_threshold:
+    if merged_score >= block_threshold:
         action: JailbreakAction = "block"
-    elif max_score >= warn_threshold:
+    elif merged_score >= warn_threshold:
         action = "warn"
     else:
         action = "allow"
 
-    result = JailbreakAnalysis(risk_score=max_score, triggered=all_triggered, action=action)
+    result = JailbreakAnalysis(risk_score=merged_score, triggered=all_triggered, action=action)
     if all_decoded:
         result.decoded_payloads = all_decoded
 

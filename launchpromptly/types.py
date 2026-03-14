@@ -51,6 +51,8 @@ class PIISecurityOptions:
     scan_response: Optional[bool] = None
     providers: Optional[List[PIIDetectorProvider]] = None
     on_detect: Optional[Callable[[List[PIIDetection]], None]] = None
+    allow_list: Optional[List[str]] = None
+    confidence_thresholds: Optional[Dict[str, float]] = None
 
 
 @dataclass
@@ -60,6 +62,7 @@ class InjectionSecurityOptions:
     block_on_high_risk: Optional[bool] = None
     providers: Optional[List[InjectionDetectorProvider]] = None
     on_detect: Optional[Callable[[InjectionAnalysis], None]] = None
+    merge_strategy: Optional[Literal["max", "weighted_average", "unanimous"]] = None
 
 
 @dataclass
@@ -70,6 +73,7 @@ class JailbreakSecurityOptions:
     block_on_detection: Optional[bool] = None
     providers: Optional[List[JailbreakDetectorProvider]] = None
     on_detect: Optional[Callable[[JailbreakAnalysis], None]] = None
+    merge_strategy: Optional[Literal["max", "weighted_average", "unanimous"]] = None
 
 
 @dataclass
@@ -160,6 +164,8 @@ class StreamGuardOptions:
 class SecurityOptions:
     """Security configuration for the wrap() pipeline."""
 
+    mode: Optional[Literal["enforce", "shadow"]] = None
+    preset: Optional[Literal["strict", "balanced", "permissive"]] = None
     pii: Optional[PIISecurityOptions] = None
     injection: Optional[InjectionSecurityOptions] = None
     jailbreak: Optional[JailbreakSecurityOptions] = None

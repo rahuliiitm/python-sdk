@@ -16,6 +16,7 @@ from .errors import (
     ModelPolicyError, OutputSchemaError, JailbreakError, TopicViolationError,
 )
 from ._internal.schema_validator import validate_output_schema
+from ._internal.presets import resolve_security_options
 from .types import LaunchPromptlyOptions, RequestContext, WrapOptions
 from ._internal.cost import calculate_event_cost
 from ._internal.fingerprint import fingerprint_messages
@@ -26,7 +27,7 @@ from ._internal.event_types import (
     JailbreakRiskPayload, UnicodeThreatsPayload, SecretDetectionsPayload,
     TopicViolationPayload, OutputSafetyPayload, PromptLeakagePayload,
 )
-from ._internal.pii import detect_pii, merge_detections, PIIDetection, PIIDetectOptions
+from ._internal.pii import detect_pii, merge_detections, apply_suppressive_context, filter_allow_list, filter_by_confidence, PIIDetection, PIIDetectOptions
 from ._internal.redaction import redact_pii, de_redact, RedactionOptions
 from ._internal.injection import detect_injection, merge_injection_analyses, InjectionAnalysis, InjectionOptions
 from ._internal.jailbreak import detect_jailbreak, merge_jailbreak_analyses, JailbreakAnalysis, JailbreakOptions
@@ -342,13 +343,13 @@ class _WrappedCompletions:
         self._lp = lp
         self._opts = opts
         # Initialize cost guard if configured
-        security = opts.security
+        security = resolve_security_options(opts.security) if opts.security else None
         self._cost_guard: Optional[CostGuard] = None
         if security and security.cost_guard:
             self._cost_guard = CostGuard(security.cost_guard)
 
     async def create(self, **kwargs: Any) -> Any:
-        security = self._opts.security
+        security = resolve_security_options(self._opts.security) if self._opts.security else None
         als_ctx = _lp_context.get()
 
         # ── PRE-CALL SECURITY PIPELINE ──────────────────────────────
@@ -369,6 +370,7 @@ class _WrappedCompletions:
         redaction_applied = False
 
         effective_kwargs = kwargs
+        is_shadow = security.mode == "shadow" if security else False
 
         if security:
             # 0a. Unicode sanitizer (must run first)
@@ -386,10 +388,10 @@ class _WrappedCompletions:
                     if security.unicode_sanitizer.on_detect:
                         security.unicode_sanitizer.on_detect(unicode_scan_result)
 
-                    if security.unicode_sanitizer.action == "block":
+                    if not is_shadow and security.unicode_sanitizer.action == "block":
                         raise RuntimeError(f"Unicode threat detected: {len(unicode_scan_result.threats)} suspicious characters found")
 
-                    if security.unicode_sanitizer.action == "strip" and unicode_scan_result.sanitized_text is not None:
+                    if not is_shadow and security.unicode_sanitizer.action == "strip" and unicode_scan_result.sanitized_text is not None:
                         sanitized_messages = []
                         for msg in messages:
                             if isinstance(msg.get("content"), str):
@@ -406,7 +408,8 @@ class _WrappedCompletions:
                     self._lp._emit("model.blocked", {"violation": violation})
                     if security.model_policy.on_violation:
                         security.model_policy.on_violation(violation)
-                    raise ModelPolicyError(violation)
+                    if not is_shadow:
+                        raise ModelPolicyError(violation)
 
             # 1. Cost guard pre-check
             if self._cost_guard:
@@ -428,7 +431,8 @@ class _WrappedCompletions:
                     self._lp._emit("cost.exceeded", {"violation": cost_violation})
                     if security.cost_guard and security.cost_guard.on_budget_exceeded:
                         security.cost_guard.on_budget_exceeded(cost_violation)
-                    raise CostLimitError(cost_violation)
+                    if not is_shadow:
+                        raise CostLimitError(cost_violation)
 
             # 2. PII detection + redaction
             pii_opts = security.pii
@@ -462,13 +466,20 @@ class _WrappedCompletions:
                     if provider_dets:
                         input_pii_detections = merge_detections(input_pii_detections, *provider_dets)
 
+                # Apply suppressive context, allow list, and confidence thresholds
+                input_pii_detections = [apply_suppressive_context(d, all_text) for d in input_pii_detections]
+                if pii_opts.allow_list:
+                    input_pii_detections = filter_allow_list(input_pii_detections, pii_opts.allow_list)
+                if pii_opts.confidence_thresholds:
+                    input_pii_detections = filter_by_confidence(input_pii_detections, pii_opts.confidence_thresholds)
+
                 if input_pii_detections:
                     self._lp._emit("pii.detected", {"detections": input_pii_detections, "direction": "input"})
                     if pii_opts.on_detect:
                         pii_opts.on_detect(input_pii_detections)
 
                 redaction_strategy = pii_opts.redaction or "placeholder"
-                if input_pii_detections and redaction_strategy != "none":
+                if not is_shadow and input_pii_detections and redaction_strategy != "none":
                     redaction_applied = True
                     redacted_messages = []
                     shared_counters: dict[str, int] = {}
@@ -510,9 +521,15 @@ class _WrappedCompletions:
                     self._lp._emit("secret.detected", {"detections": input_secret_detections, "direction": "input"})
                     if security.secret_detection.on_detect:
                         security.secret_detection.on_detect(input_secret_detections)
-                    if security.secret_detection.action == "block":
+                    if not is_shadow and security.secret_detection.action == "block":
                         types_found = ", ".join(d.type for d in input_secret_detections)
                         raise RuntimeError(f"Secrets detected in input: {types_found}")
+
+            # Extract system prompt for injection/jailbreak awareness
+            _messages = kwargs.get("messages", [])
+            system_prompt_text = "\n".join(
+                m.get("content", "") for m in _messages if m.get("role") == "system"
+            ) or None
 
             # 3. Injection detection
             inj_opts = security.injection
@@ -525,6 +542,8 @@ class _WrappedCompletions:
                 if user_text:
                     inj_detect_opts = InjectionOptions(
                         block_threshold=inj_opts.block_threshold or 0.7,
+                        system_prompt=system_prompt_text,
+                        merge_strategy=inj_opts.merge_strategy,
                     )
                     injection_result = detect_injection(user_text, inj_detect_opts)
 
@@ -545,7 +564,7 @@ class _WrappedCompletions:
                     if inj_opts.on_detect:
                         inj_opts.on_detect(injection_result)
 
-                    if inj_opts.block_on_high_risk and injection_result.action == "block":
+                    if not is_shadow and inj_opts.block_on_high_risk and injection_result.action == "block":
                         self._lp._emit("injection.blocked", {"analysis": injection_result})
                         raise PromptInjectionError(injection_result)
 
@@ -561,6 +580,7 @@ class _WrappedCompletions:
                         JailbreakOptions(
                             block_threshold=security.jailbreak.block_threshold,
                             warn_threshold=security.jailbreak.warn_threshold,
+                            system_prompt=system_prompt_text,
                         ),
                     )
                     if security.jailbreak.providers:
@@ -573,13 +593,16 @@ class _WrappedCompletions:
                         if provider_results:
                             jailbreak_result = merge_jailbreak_analyses(
                                 [jailbreak_result, *provider_results],
-                                JailbreakOptions(block_threshold=security.jailbreak.block_threshold),
+                                JailbreakOptions(
+                                    block_threshold=security.jailbreak.block_threshold,
+                                    merge_strategy=security.jailbreak.merge_strategy,
+                                ),
                             )
                     if jailbreak_result.risk_score > 0:
                         self._lp._emit("jailbreak.detected", {"analysis": jailbreak_result})
                         if security.jailbreak.on_detect:
                             security.jailbreak.on_detect(jailbreak_result)
-                    if security.jailbreak.block_on_detection is not False and jailbreak_result.action == "block":
+                    if not is_shadow and security.jailbreak.block_on_detection is not False and jailbreak_result.action == "block":
                         self._lp._emit("jailbreak.blocked", {"analysis": jailbreak_result})
                         raise JailbreakError(jailbreak_result)
 
@@ -593,7 +616,7 @@ class _WrappedCompletions:
                 if input_content_violations:
                     self._lp._emit("content.violated", {"violations": input_content_violations, "direction": "input"})
 
-                if has_blocking_violation(input_content_violations, cf_opts):
+                if not is_shadow and has_blocking_violation(input_content_violations, cf_opts):
                     if cf_opts.on_violation and input_content_violations:
                         cf_opts.on_violation(input_content_violations[0])
                     raise ContentViolationError(input_content_violations)
@@ -617,7 +640,7 @@ class _WrappedCompletions:
                     self._lp._emit("topic.violated", {"violation": topic_violation_result})
                     if security.topic_guard.on_violation:
                         security.topic_guard.on_violation(topic_violation_result)
-                    if security.topic_guard.action != "warn":
+                    if not is_shadow and security.topic_guard.action != "warn":
                         raise TopicViolationError(topic_violation_result)
 
         # ── STREAMING SHORTCUT ─────────────────────────────────────
@@ -639,8 +662,12 @@ class _WrappedCompletions:
                         cost = calculate_event_cost("openai", _model, 0, report.approximate_tokens)
                         _cost_guard.record_cost(cost)
 
+                sg_opts = security.stream_guard
+                if is_shadow:
+                    from dataclasses import replace as _dc_replace
+                    sg_opts = _dc_replace(sg_opts, on_violation="flag")
                 engine = StreamGuardEngine(
-                    stream_guard=security.stream_guard,
+                    stream_guard=sg_opts,
                     pii_types=security.pii.types if security.pii else None,
                     pii_providers=security.pii.providers if security.pii else None,
                     injection_block_threshold=(
@@ -720,7 +747,7 @@ class _WrappedCompletions:
                     self._lp._emit("output.unsafe", {"threats": output_safety_threats})
                     if security.output_safety.on_detect:
                         security.output_safety.on_detect(output_safety_threats)
-                    if security.output_safety.action == "block":
+                    if not is_shadow and security.output_safety.action == "block":
                         cats = ", ".join(t.category for t in output_safety_threats)
                         raise RuntimeError(f"Unsafe output detected: {cats}")
 
@@ -737,7 +764,7 @@ class _WrappedCompletions:
                     self._lp._emit("prompt.leaked", {"result": prompt_leakage_result})
                     if security.prompt_leakage.on_detect:
                         security.prompt_leakage.on_detect(prompt_leakage_result)
-                    if security.prompt_leakage.block_on_leak:
+                    if not is_shadow and security.prompt_leakage.block_on_leak:
                         raise RuntimeError(f"System prompt leakage detected (similarity: {prompt_leakage_result.similarity:.2f})")
 
             # Post-call: secret detection (output)
@@ -766,7 +793,7 @@ class _WrappedCompletions:
                 validation = validate_output_schema(response_text, security.output_schema)
                 if not validation.valid:
                     self._lp._emit("schema.invalid", {"errors": validation.errors, "response_text": response_text})
-                    if security.output_schema.block_on_invalid:
+                    if not is_shadow and security.output_schema.block_on_invalid:
                         raise OutputSchemaError(validation.errors, response_text)
 
             # Post-call: de-redact response

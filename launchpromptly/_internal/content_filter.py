@@ -26,6 +26,16 @@ class CustomPattern:
     severity: ContentSeverity
 
 
+SafeDomain = Literal[
+    "medical",
+    "educational",
+    "security_research",
+    "news",
+    "historical",
+    "fiction",
+]
+
+
 @dataclass
 class ContentFilterOptions:
     enabled: Optional[bool] = None
@@ -33,6 +43,7 @@ class ContentFilterOptions:
     custom_patterns: Optional[List[CustomPattern]] = None
     block_on_violation: Optional[bool] = None
     on_violation: Optional[Callable[[ContentViolation], None]] = None
+    safe_domains: Optional[List[SafeDomain]] = None
 
 
 @dataclass
@@ -153,6 +164,90 @@ _CATEGORY_RULES: List[_CategoryRule] = [
 ]
 
 
+# -- Safe-domain context keywords -----------------------------------------------
+
+_DOMAIN_KEYWORDS: dict[SafeDomain, re.Pattern[str]] = {
+    "medical": re.compile(
+        r"\b(?:patient|clinical|diagnosis|symptom|treatment|therapy|medical|hospital|doctor|nurse|"
+        r"physician|prescription|dosage|healthcare|prevention|intervention|counseling|hotline|"
+        r"crisis\s+line|mental\s+health|disorder|syndrome)\b",
+        re.IGNORECASE,
+    ),
+    "educational": re.compile(
+        r"\b(?:lesson|curriculum|course|student|teacher|professor|lecture|study|research|academic|"
+        r"textbook|exam|assignment|university|school|classroom|syllabus|thesis|dissertation)\b",
+        re.IGNORECASE,
+    ),
+    "security_research": re.compile(
+        r"\b(?:vulnerability|CVE|penetration\s+test|pentest|security\s+audit|threat\s+model|"
+        r"red\s+team|blue\s+team|CTF|capture\s+the\s+flag|OWASP|security\s+research|bug\s+bounty|"
+        r"responsible\s+disclosure|patch|mitigation|defense|detection|prevention|firewall|IDS|antivirus)\b",
+        re.IGNORECASE,
+    ),
+    "news": re.compile(
+        r"\b(?:reported|according\s+to|news|journalist|article|press|media|coverage|investigation|"
+        r"headline|breaking|sources?\s+(?:say|said|report)|alleged|incident|authorities)\b",
+        re.IGNORECASE,
+    ),
+    "historical": re.compile(
+        r"\b(?:historical|century|era|ancient|medieval|war\s+of|battle\s+of|history\s+of|"
+        r"in\s+\d{3,4}|historians?|archaeological|civilization|dynasty|empire|colonial|revolution)\b",
+        re.IGNORECASE,
+    ),
+    "fiction": re.compile(
+        r"\b(?:novel|fiction|story|character|protagonist|antagonist|plot|chapter|narrative|"
+        r"fantasy|sci-fi|screenplay|movie|film|book|author|wrote|writing\s+a)\b",
+        re.IGNORECASE,
+    ),
+}
+
+
+def _apply_domain_context(
+    violations: List[ContentViolation],
+    text: str,
+    safe_domains: Optional[List[SafeDomain]],
+) -> List[ContentViolation]:
+    """Downgrade 'block' → 'warn' when safe domain context is found near the match.
+
+    IMPORTANT: 'sexual' category (CSAM-related) is NEVER downgraded.
+    """
+    if not safe_domains:
+        return violations
+
+    result: List[ContentViolation] = []
+    for v in violations:
+        if v.severity != "block" or v.category == "sexual":
+            result.append(v)
+            continue
+
+        match_idx = text.find(v.matched)
+        if match_idx == -1:
+            result.append(v)
+            continue
+
+        ctx_start = max(0, match_idx - 200)
+        ctx_end = min(len(text), match_idx + len(v.matched) + 200)
+        context = text[ctx_start:ctx_end]
+
+        downgraded = False
+        for domain in safe_domains:
+            kw_re = _DOMAIN_KEYWORDS.get(domain)
+            if kw_re and kw_re.search(context):
+                result.append(ContentViolation(
+                    category=v.category,
+                    matched=v.matched,
+                    severity="warn",
+                    location=v.location,
+                ))
+                downgraded = True
+                break
+
+        if not downgraded:
+            result.append(v)
+
+    return result
+
+
 # -- Detection -----------------------------------------------------------------
 
 def detect_content_violations(
@@ -199,7 +294,9 @@ def detect_content_violations(
                     )
                 )
 
-    return violations
+    # Apply safe-domain context (downgrades 'block' → 'warn' when domain context found)
+    safe_domains = options.safe_domains if options else None
+    return _apply_domain_context(violations, text, safe_domains)
 
 
 def has_blocking_violation(

@@ -516,6 +516,61 @@ def merge_detections(*detection_arrays: List[PIIDetection]) -> List[PIIDetection
     return _deduplicate_detections(all_dets)
 
 
+# ── Suppressive context: business terms near PII matches reduce confidence ──
+
+_SUPPRESSIVE_CONTEXT: dict[str, re.Pattern[str]] = {
+    "phone": re.compile(
+        r"\b(?:order|sku|tracking|invoice|reference|ref|ticket|case|account|id|code|pin|ext(?:ension)?|fax|zip|postal)\b",
+        re.IGNORECASE,
+    ),
+    "ssn": re.compile(
+        r"\b(?:order|tracking|invoice|reference|serial|model|sku|part|item|product|account|routing)\b",
+        re.IGNORECASE,
+    ),
+    "credit_card": re.compile(
+        r"\b(?:order|tracking|serial|model|sku|part|item|product|barcode)\b",
+        re.IGNORECASE,
+    ),
+}
+
+
+def apply_suppressive_context(detection: PIIDetection, full_text: str) -> PIIDetection:
+    """If business terms appear near a PII match, reduce confidence by 0.3 (floor 0.1)."""
+    suppress_re = _SUPPRESSIVE_CONTEXT.get(detection.type)
+    if not suppress_re:
+        return detection
+    preceding = full_text[max(0, detection.start - 60):detection.start]
+    if suppress_re.search(preceding):
+        return PIIDetection(
+            type=detection.type,
+            value=detection.value,
+            start=detection.start,
+            end=detection.end,
+            confidence=max(detection.confidence - 0.3, 0.1),
+        )
+    return detection
+
+
+def filter_allow_list(detections: List[PIIDetection], allow_list: List[str]) -> List[PIIDetection]:
+    """Filter detections against an allow list (normalized: strip formatting)."""
+    if not allow_list:
+        return detections
+    normalize = lambda s: re.sub(r"[\s\-().]", "", s)
+    allow_set = {normalize(v) for v in allow_list}
+    return [d for d in detections if normalize(d.value) not in allow_set]
+
+
+def filter_by_confidence(
+    detections: List[PIIDetection],
+    thresholds: dict[str, float],
+) -> List[PIIDetection]:
+    """Filter detections by per-type confidence thresholds."""
+    return [
+        d for d in detections
+        if thresholds.get(d.type) is None or d.confidence >= thresholds[d.type]
+    ]
+
+
 class RegexPIIDetector:
     """Built-in regex PII detector implementing the provider interface."""
 
