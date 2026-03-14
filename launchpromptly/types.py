@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Union
 
 if TYPE_CHECKING:
     from ._internal.content_filter import ContentFilterOptions
@@ -123,6 +123,24 @@ class PromptLeakageSecurityOptions:
 
 
 @dataclass
+class HallucinationSecurityOptions:
+    """Configuration for hallucination detection guardrail."""
+
+    enabled: Optional[bool] = None
+    source_text: Optional[str] = None
+    """Explicit reference text to compare the LLM response against."""
+    extract_from_system_prompt: bool = True
+    """Auto-extract source from system message if no explicit source_text given."""
+    threshold: float = 0.5
+    """Faithfulness score threshold (0-1). Below this = hallucination detected."""
+    block_on_detection: bool = False
+    """Block the response when hallucination is detected."""
+    on_detect: Optional[Callable[[Any], None]] = None
+    providers: Optional[List[Any]] = None
+    """Pluggable hallucination detection providers (e.g., ML cross-encoder)."""
+
+
+@dataclass
 class AuditOptions:
     log_level: Optional[str] = None  # 'none' | 'summary' | 'detailed'
 
@@ -166,6 +184,17 @@ class SecurityOptions:
 
     mode: Optional[Literal["enforce", "shadow"]] = None
     preset: Optional[Literal["strict", "balanced", "permissive"]] = None
+    use_ml: Optional[Union[bool, List[str]]] = None
+    """Auto-create and register ML-powered providers for guardrails.
+
+    - True: enable ML for all available guardrails
+    - False (default): regex/rule-based only
+    - List[str]: enable ML only for listed guardrails
+
+    Valid names: 'injection', 'jailbreak', 'pii', 'toxicity' (alias: 'content_filter'), 'hallucination'
+
+    Requires: pip install launchpromptly[ml]
+    """
     pii: Optional[PIISecurityOptions] = None
     injection: Optional[InjectionSecurityOptions] = None
     jailbreak: Optional[JailbreakSecurityOptions] = None
@@ -179,6 +208,7 @@ class SecurityOptions:
     topic_guard: Optional[TopicGuardSecurityOptions] = None
     output_safety: Optional[OutputSafetySecurityOptions] = None
     prompt_leakage: Optional[PromptLeakageSecurityOptions] = None
+    hallucination: Optional[HallucinationSecurityOptions] = None
     audit: Optional[AuditOptions] = None
 
 
@@ -197,6 +227,8 @@ GuardrailEventType = Literal[
     "schema.invalid",
     "model.blocked",
     "unicode.suspicious",
+    "hallucination.detected",
+    "hallucination.blocked",
     "secret.detected",
     "topic.violated",
     "output.unsafe",

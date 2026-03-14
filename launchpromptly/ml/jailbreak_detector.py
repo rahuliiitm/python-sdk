@@ -43,7 +43,7 @@ class MLJailbreakDetector:
 
     def __init__(
         self,
-        model_name: str = "testsavantai/prompt-injection-defender-tiny-v0",
+        model_name: str = "meta-llama/Prompt-Guard-86M",
         device: Optional[int] = None,
         quantized: bool = True,
     ) -> None:

@@ -44,6 +44,8 @@ class ContentFilterOptions:
     block_on_violation: Optional[bool] = None
     on_violation: Optional[Callable[[ContentViolation], None]] = None
     safe_domains: Optional[List[SafeDomain]] = None
+    providers: Optional[List["ContentFilterProvider"]] = None
+    """Pluggable content filter providers (e.g., ML toxicity)."""
 
 
 @dataclass

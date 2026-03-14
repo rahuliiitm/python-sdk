@@ -342,6 +342,7 @@ class _WrappedCompletions:
         self._original = original
         self._lp = lp
         self._opts = opts
+        self._ml_init_done = False
         # Initialize cost guard if configured
         security = resolve_security_options(opts.security) if opts.security else None
         self._cost_guard: Optional[CostGuard] = None
@@ -350,6 +351,16 @@ class _WrappedCompletions:
 
     async def create(self, **kwargs: Any) -> Any:
         security = resolve_security_options(self._opts.security) if self._opts.security else None
+
+        # Lazy ML provider initialization (runs once on first call)
+        if security and security.use_ml and not self._ml_init_done:
+            from ._internal.ml_resolver import create_ml_providers, merge_ml_providers
+            ml_providers = create_ml_providers(security.use_ml)
+            security = merge_ml_providers(security, ml_providers)
+            # Cache the resolved security for subsequent calls
+            self._opts.security = security
+            self._ml_init_done = True
+
         als_ctx = _lp_context.get()
 
         # ── PRE-CALL SECURITY PIPELINE ──────────────────────────────
@@ -363,6 +374,7 @@ class _WrappedCompletions:
         topic_violation_result: Optional[TopicViolation] = None
         output_safety_threats: list[OutputSafetyThreat] = []
         prompt_leakage_result: Optional[PromptLeakageResult] = None
+        hallucination_result = None
         cost_violation = None
         input_content_violations: list[ContentViolation] = []
         output_content_violations: list[ContentViolation] = []
@@ -613,6 +625,15 @@ class _WrappedCompletions:
                 all_input = "\n".join(m.get("content", "") for m in messages)
                 input_content_violations = detect_content_violations(all_input, "input", cf_opts)
 
+                # Run pluggable content filter providers (e.g., ML toxicity)
+                if cf_opts.providers:
+                    for provider in cf_opts.providers:
+                        try:
+                            pv = provider.detect(all_input, "input")
+                            input_content_violations.extend(pv)
+                        except Exception:
+                            pass
+
                 if input_content_violations:
                     self._lp._emit("content.violated", {"violations": input_content_violations, "direction": "input"})
 
@@ -734,6 +755,16 @@ class _WrappedCompletions:
             cf_opts = security.content_filter
             if cf_opts and cf_opts.enabled is not False and response_text:
                 output_content_violations = detect_content_violations(response_text, "output", cf_opts)
+
+                # Run pluggable content filter providers on output
+                if cf_opts.providers:
+                    for provider in cf_opts.providers:
+                        try:
+                            pv = provider.detect(response_text, "output")
+                            output_content_violations.extend(pv)
+                        except Exception:
+                            pass
+
                 if output_content_violations:
                     self._lp._emit("content.violated", {"violations": output_content_violations, "direction": "output"})
 
@@ -766,6 +797,47 @@ class _WrappedCompletions:
                         security.prompt_leakage.on_detect(prompt_leakage_result)
                     if not is_shadow and security.prompt_leakage.block_on_leak:
                         raise RuntimeError(f"System prompt leakage detected (similarity: {prompt_leakage_result.similarity:.2f})")
+
+            # Post-call: hallucination detection
+            if security.hallucination and security.hallucination.enabled is not False and response_text:
+                # Determine source text: explicit > system prompt
+                source_text = security.hallucination.source_text
+                if not source_text and security.hallucination.extract_from_system_prompt:
+                    messages = kwargs.get("messages", [])
+                    sys_msg = next((m for m in messages if m.get("role") == "system"), None)
+                    if sys_msg and isinstance(sys_msg.get("content"), str):
+                        source_text = sys_msg["content"]
+
+                if source_text:
+                    from ._internal.hallucination import detect_hallucination, merge_hallucination_results
+                    hallucination_result = detect_hallucination(
+                        response_text, source_text,
+                        threshold=security.hallucination.threshold,
+                    )
+
+                    # Run ML providers if available
+                    if security.hallucination.providers:
+                        provider_results = []
+                        for p in security.hallucination.providers:
+                            try:
+                                provider_results.append(p.detect(response_text, source_text))
+                            except Exception:
+                                pass
+                        if provider_results:
+                            hallucination_result = merge_hallucination_results(
+                                [hallucination_result] + provider_results
+                            )
+
+                    if hallucination_result.hallucinated:
+                        self._lp._emit("hallucination.detected", {"result": hallucination_result})
+                        if security.hallucination.on_detect:
+                            security.hallucination.on_detect(hallucination_result)
+
+                        if not is_shadow and security.hallucination.block_on_detection:
+                            self._lp._emit("hallucination.blocked", {"result": hallucination_result})
+                            raise RuntimeError(
+                                f"Hallucination detected (faithfulness: {hallucination_result.faithfulness_score:.2f})"
+                            )
 
             # Post-call: secret detection (output)
             if security.secret_detection and security.secret_detection.enabled is not False and security.secret_detection.scan_response is not False and response_text:
@@ -844,6 +916,7 @@ class _WrappedCompletions:
                 topic_violation_result=topic_violation_result,
                 output_safety_threats=output_safety_threats,
                 prompt_leakage_result=prompt_leakage_result,
+                hallucination_result=hallucination_result,
                 response_text=response_text,
             )
         except Exception:
@@ -871,6 +944,7 @@ class _WrappedCompletions:
         topic_violation_result: Optional[TopicViolation] = None,
         output_safety_threats: Optional[list] = None,
         prompt_leakage_result: Optional[PromptLeakageResult] = None,
+        hallucination_result: Any = None,
         response_text: Optional[str] = None,
     ) -> None:
         usage = getattr(result, "usage", None)
@@ -1047,6 +1121,13 @@ class _WrappedCompletions:
                     similarity=prompt_leakage_result.similarity,
                     meta_response_detected=prompt_leakage_result.meta_response_detected,
                 )
+
+            if hallucination_result and hallucination_result.hallucinated:
+                event.hallucination = {
+                    "detected": True,
+                    "faithfulness_score": hallucination_result.faithfulness_score,
+                    "severity": hallucination_result.severity,
+                }
 
         self._lp._batcher.enqueue(event)
 

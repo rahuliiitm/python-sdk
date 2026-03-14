@@ -324,6 +324,16 @@ class _WrappedAnthropicMessages:
             if cf_opts and cf_opts.enabled is not False:
                 texts = extract_anthropic_message_texts(kwargs)
                 input_content_violations = detect_content_violations(texts["all_text"], "input", cf_opts)
+
+                # Run pluggable content filter providers (e.g., ML toxicity)
+                if cf_opts.providers:
+                    for provider in cf_opts.providers:
+                        try:
+                            pv = provider.detect(texts["all_text"], "input")
+                            input_content_violations.extend(pv)
+                        except Exception:
+                            pass
+
                 if input_content_violations:
                     self._lp._emit("content.violated", {"violations": input_content_violations, "direction": "input"})
                 if has_blocking_violation(input_content_violations, cf_opts):
@@ -405,6 +415,15 @@ class _WrappedAnthropicMessages:
             cf_opts = security.content_filter
             if cf_opts and cf_opts.enabled is not False and response_text:
                 output_content_violations = detect_content_violations(response_text, "output", cf_opts)
+
+                if cf_opts.providers:
+                    for provider in cf_opts.providers:
+                        try:
+                            pv = provider.detect(response_text, "output")
+                            output_content_violations.extend(pv)
+                        except Exception:
+                            pass
+
                 if output_content_violations:
                     self._lp._emit("content.violated", {"violations": output_content_violations, "direction": "output"})
 

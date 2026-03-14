@@ -28,7 +28,7 @@ _DEFAULT_BLOCK_THRESHOLD = 0.7
 class MLInjectionDetector:
     """ML-based injection detector using a small transformer classifier.
 
-    Uses the ``testsavantai/prompt-injection-defender-tiny-v0`` model by
+    Uses the ``meta-llama/Prompt-Guard-86M`` model by
     default -- a compact (~50MB quantized) and accurate prompt injection classifier.
 
     Example::
@@ -40,7 +40,7 @@ class MLInjectionDetector:
 
     def __init__(
         self,
-        model_name: str = "testsavantai/prompt-injection-defender-tiny-v0",
+        model_name: str = "meta-llama/Prompt-Guard-86M",
         device: Optional[int] = None,
         quantized: bool = True,
     ) -> None:

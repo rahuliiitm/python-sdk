@@ -84,9 +84,26 @@ except ImportError as exc:
             )
 
 
+try:
+    from .hallucination_detector import MLHallucinationDetector
+except ImportError as exc:
+    _import_errors["MLHallucinationDetector"] = str(exc)
+
+    class MLHallucinationDetector:  # type: ignore[no-redef]
+        """Placeholder that raises when transformers deps are missing."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "MLHallucinationDetector requires transformers. "
+                f"Install with: pip install launchpromptly[ml]\n"
+                f"Original error: {_import_errors['MLHallucinationDetector']}"
+            )
+
+
 __all__ = [
     "PresidioPIIDetector",
     "MLInjectionDetector",
     "MLJailbreakDetector",
     "MLToxicityDetector",
+    "MLHallucinationDetector",
 ]
