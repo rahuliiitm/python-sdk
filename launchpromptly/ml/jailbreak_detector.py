@@ -7,15 +7,17 @@ rephrased DAN-style attacks, novel persona assignments, multi-language jailbreak
 Reuses an injection classification model since jailbreaks are a subclass of
 prompt injection attacks.
 
-Requires:
-    pip install transformers torch  (or transformers onnxruntime)
+Prefers onnxruntime + tokenizers for native inference (8-20ms).
+Falls back to transformers + torch if onnxruntime is not installed.
 
-Or simply:
-    pip install launchpromptly[ml]
+Requires::
+
+    pip install onnxruntime tokenizers   # recommended
+    pip install launchpromptly[ml-onnx]  # same as above
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from launchpromptly._internal.jailbreak import (
     JailbreakAction,
@@ -34,6 +36,8 @@ class MLJailbreakDetector:
     jailbreaks are a form of prompt injection. Maps the output to JailbreakAnalysis
     with 'semantic_jailbreak' as the triggered category.
 
+    Tries ONNX Runtime first (8-20ms), falls back to transformers (500ms-2s).
+
     Example::
 
         from launchpromptly.ml import MLJailbreakDetector
@@ -47,12 +51,35 @@ class MLJailbreakDetector:
         device: Optional[int] = None,
         quantized: bool = True,
     ) -> None:
+        self._model_name = model_name
+
+        # Try ONNX Runtime first (25-100x faster)
+        use_onnx = False
+        try:
+            import onnxruntime  # noqa: F401
+            from tokenizers import Tokenizer  # noqa: F401
+
+            use_onnx = True
+        except ImportError:
+            pass
+
+        if use_onnx:
+            from .onnx_runtime import OnnxSession
+
+            session = OnnxSession.create(
+                model_name, max_length=512, quantized=quantized
+            )
+            self._classifier = lambda text: session.classify(text)
+            return
+
+        # Fallback: transformers pipeline
         try:
             from transformers import pipeline  # type: ignore[import-untyped]
         except ImportError:
             raise ImportError(
-                "MLJailbreakDetector requires transformers. "
-                "Install with: pip install launchpromptly[ml]"
+                "MLJailbreakDetector requires onnxruntime+tokenizers (recommended) "
+                "or transformers. "
+                "Install with: pip install launchpromptly[ml-onnx]"
             )
 
         kwargs: dict = {
@@ -72,7 +99,6 @@ class MLJailbreakDetector:
                 pass
 
         self._classifier = pipeline(**kwargs)
-        self._model_name = model_name
 
     @property
     def name(self) -> str:

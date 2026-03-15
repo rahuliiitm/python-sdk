@@ -56,6 +56,16 @@ class PIISecurityOptions:
 
 
 @dataclass
+class CascadeThresholds:
+    """Thresholds for cascade logic — skip ML when regex is confident."""
+
+    skip_above: float = 0.85
+    """Skip ML if regex risk score is above this value."""
+    skip_below: float = 0.10
+    """Skip ML if regex risk score is below this value."""
+
+
+@dataclass
 class InjectionSecurityOptions:
     enabled: Optional[bool] = None
     block_threshold: Optional[float] = None
@@ -63,6 +73,10 @@ class InjectionSecurityOptions:
     providers: Optional[List[InjectionDetectorProvider]] = None
     on_detect: Optional[Callable[[InjectionAnalysis], None]] = None
     merge_strategy: Optional[Literal["max", "weighted_average", "unanimous"]] = None
+    cascade: Optional[bool] = None
+    """Enable cascade: skip ML providers when regex gives a confident result."""
+    cascade_thresholds: Optional[CascadeThresholds] = None
+    """Thresholds for cascade skip logic."""
 
 
 @dataclass
@@ -74,6 +88,10 @@ class JailbreakSecurityOptions:
     providers: Optional[List[JailbreakDetectorProvider]] = None
     on_detect: Optional[Callable[[JailbreakAnalysis], None]] = None
     merge_strategy: Optional[Literal["max", "weighted_average", "unanimous"]] = None
+    cascade: Optional[bool] = None
+    """Enable cascade: skip ML providers when regex gives a confident result."""
+    cascade_thresholds: Optional[CascadeThresholds] = None
+    """Thresholds for cascade skip logic."""
 
 
 @dataclass

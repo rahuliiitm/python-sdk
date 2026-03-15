@@ -4,15 +4,17 @@ ML-based hallucination detector using a cross-encoder model.
 Compares generated text against source text to score faithfulness.
 Uses the vectara/hallucination_evaluation_model (HHEM) by default.
 
-Requires:
-    pip install transformers torch  (or transformers onnxruntime)
+Prefers onnxruntime + tokenizers for native inference (8-20ms).
+Falls back to transformers + torch if onnxruntime is not installed.
 
-Or simply:
-    pip install launchpromptly[ml]
+Requires::
+
+    pip install onnxruntime tokenizers   # recommended
+    pip install launchpromptly[ml-onnx]  # same as above
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from launchpromptly._internal.hallucination import HallucinationResult
 
@@ -22,6 +24,8 @@ class MLHallucinationDetector:
 
     Uses the ``vectara/hallucination_evaluation_model`` by default --
     a 137M parameter cross-encoder trained to score text faithfulness.
+
+    Tries ONNX Runtime first (8-20ms), falls back to transformers (500ms-2s).
 
     Example::
 
@@ -37,12 +41,38 @@ class MLHallucinationDetector:
         device: Optional[int] = None,
         quantized: bool = True,
     ) -> None:
+        self._model_name = model_name
+        self._threshold = threshold
+
+        # Try ONNX Runtime first (25-100x faster)
+        use_onnx = False
+        try:
+            import onnxruntime  # noqa: F401
+            from tokenizers import Tokenizer  # noqa: F401
+
+            use_onnx = True
+        except ImportError:
+            pass
+
+        if use_onnx:
+            from .onnx_runtime import OnnxSession
+
+            session = OnnxSession.create(
+                model_name, max_length=512, quantized=quantized
+            )
+            self._classifier = lambda inputs: session.classify_pair(
+                inputs["text"], inputs["text_pair"]
+            )
+            return
+
+        # Fallback: transformers pipeline
         try:
             from transformers import pipeline  # type: ignore[import-untyped]
         except ImportError:
             raise ImportError(
-                "MLHallucinationDetector requires transformers. "
-                "Install with: pip install launchpromptly[ml]"
+                "MLHallucinationDetector requires onnxruntime+tokenizers (recommended) "
+                "or transformers. "
+                "Install with: pip install launchpromptly[ml-onnx]"
             )
 
         kwargs: dict = {
@@ -54,18 +84,14 @@ class MLHallucinationDetector:
         if device is not None:
             kwargs["device"] = device
 
-        # Use ONNX runtime if available and quantized mode requested
         if quantized:
             try:
                 import onnxruntime  # noqa: F401
-
                 kwargs["model_kwargs"] = {"from_tf": False}
             except ImportError:
-                pass  # Fall back to PyTorch
+                pass
 
         self._classifier = pipeline(**kwargs)
-        self._model_name = model_name
-        self._threshold = threshold
 
     # -- Provider interface -------------------------------------------------------
 

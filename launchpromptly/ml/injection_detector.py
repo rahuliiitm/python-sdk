@@ -4,15 +4,21 @@ ML-based prompt injection detector using a small transformer classifier.
 Catches semantic injection attacks that rule-based detection misses:
 rephrased attacks, indirect injection, multi-language attacks.
 
-Requires:
-    pip install transformers torch  (or transformers onnxruntime)
+Prefers onnxruntime + tokenizers for native inference (8-20ms).
+Falls back to transformers + torch if onnxruntime is not installed.
 
-Or simply:
-    pip install launchpromptly[ml]
+Requires::
+
+    pip install onnxruntime tokenizers   # recommended (fast, ~20MB)
+
+Or::
+
+    pip install launchpromptly[ml-onnx]  # same as above
+    pip install launchpromptly[ml]       # heavy: transformers + torch (~2.5GB)
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from launchpromptly._internal.injection import (
     InjectionAction,
@@ -31,6 +37,8 @@ class MLInjectionDetector:
     Uses the ``meta-llama/Prompt-Guard-86M`` model by
     default -- a compact (~50MB quantized) and accurate prompt injection classifier.
 
+    Tries ONNX Runtime first (8-20ms), falls back to transformers (500ms-2s).
+
     Example::
 
         from launchpromptly.ml import MLInjectionDetector
@@ -44,12 +52,35 @@ class MLInjectionDetector:
         device: Optional[int] = None,
         quantized: bool = True,
     ) -> None:
+        self._model_name = model_name
+
+        # Try ONNX Runtime first (25-100x faster)
+        use_onnx = False
+        try:
+            import onnxruntime  # noqa: F401
+            from tokenizers import Tokenizer  # noqa: F401
+
+            use_onnx = True
+        except ImportError:
+            pass
+
+        if use_onnx:
+            from .onnx_runtime import OnnxSession
+
+            session = OnnxSession.create(
+                model_name, max_length=512, quantized=quantized
+            )
+            self._classifier = lambda text: session.classify(text)
+            return
+
+        # Fallback: transformers pipeline (heavy, slow)
         try:
             from transformers import pipeline  # type: ignore[import-untyped]
         except ImportError:
             raise ImportError(
-                "MLInjectionDetector requires transformers. "
-                "Install with: pip install launchpromptly[ml]"
+                "MLInjectionDetector requires onnxruntime+tokenizers (recommended) "
+                "or transformers. "
+                "Install with: pip install launchpromptly[ml-onnx]"
             )
 
         kwargs: dict = {
@@ -61,16 +92,14 @@ class MLInjectionDetector:
         if device is not None:
             kwargs["device"] = device
 
-        # Use ONNX runtime if available and quantized mode requested
         if quantized:
             try:
                 import onnxruntime  # noqa: F401
                 kwargs["model_kwargs"] = {"from_tf": False}
             except ImportError:
-                pass  # Fall back to PyTorch
+                pass
 
         self._classifier = pipeline(**kwargs)
-        self._model_name = model_name
 
     # -- Provider interface -------------------------------------------------------
 

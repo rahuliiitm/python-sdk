@@ -23,6 +23,11 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+ml-onnx = [
+    "onnxruntime>=1.16.0",
+    "tokenizers>=0.15.0",
+    "numpy>=1.24.0",
+]
 ml = [
     "presidio-analyzer>=2.2.0",
     "spacy>=3.5.0",

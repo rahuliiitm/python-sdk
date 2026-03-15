@@ -3,15 +3,19 @@ LaunchPromptly ML plugin -- optional ML-based security detectors.
 
 Install via::
 
-    pip install launchpromptly[ml]
+    pip install launchpromptly[ml-onnx]   # recommended: ONNX Runtime (fast, ~20MB)
+    pip install launchpromptly[ml]         # heavy: transformers + torch (~2.5GB)
 
-This package provides three ML-powered providers that can be used alongside
-(or in place of) the built-in regex / rule-based detectors:
+Uses ONNX Runtime for native inference (8-20ms) when onnxruntime + tokenizers
+are installed. Falls back to transformers (500ms-2s) otherwise.
 
+Detectors:
+
+* :class:`MLInjectionDetector` -- Prompt injection detection
+* :class:`MLJailbreakDetector` -- Jailbreak detection
+* :class:`MLToxicityDetector` -- Toxicity / content-safety detection
+* :class:`MLHallucinationDetector` -- Hallucination detection (cross-encoder)
 * :class:`PresidioPIIDetector` -- NER-based PII detection (Microsoft Presidio)
-* :class:`MLInjectionDetector` -- Transformer-based prompt injection detection
-* :class:`MLJailbreakDetector` -- Transformer-based jailbreak detection
-* :class:`MLToxicityDetector` -- Transformer-based toxicity / content-safety detection
 
 Each provider satisfies the corresponding Protocol interface defined in the
 core SDK so it can be registered as a drop-in replacement.
@@ -100,10 +104,25 @@ except ImportError as exc:
             )
 
 
+try:
+    from .onnx_runtime import OnnxSession
+except ImportError:
+    pass
+
+try:
+    from .model_cache import ensure_model, get_cache_dir, remove_model, list_cached_models
+except Exception:
+    pass
+
 __all__ = [
     "PresidioPIIDetector",
     "MLInjectionDetector",
     "MLJailbreakDetector",
     "MLToxicityDetector",
     "MLHallucinationDetector",
+    "OnnxSession",
+    "ensure_model",
+    "get_cache_dir",
+    "remove_model",
+    "list_cached_models",
 ]

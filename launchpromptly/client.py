@@ -560,16 +560,24 @@ class _WrappedCompletions:
                     injection_result = detect_injection(user_text, inj_detect_opts)
 
                     if inj_opts.providers:
-                        provider_results = []
-                        for p in inj_opts.providers:
-                            try:
-                                provider_results.append(p.detect(user_text))
-                            except Exception:
-                                provider_results.append(InjectionAnalysis(0, [], "allow"))
-                        injection_result = merge_injection_analyses(
-                            [injection_result] + provider_results,
-                            inj_detect_opts,
-                        )
+                        cascade = inj_opts.cascade if inj_opts.cascade is not None else True
+                        ct = inj_opts.cascade_thresholds
+                        skip_above = ct.skip_above if ct else 0.85
+                        skip_below = ct.skip_below if ct else 0.10
+                        regex_score = injection_result.risk_score
+                        skip_ml = cascade and (regex_score >= skip_above or regex_score <= skip_below)
+
+                        if not skip_ml:
+                            provider_results = []
+                            for p in inj_opts.providers:
+                                try:
+                                    provider_results.append(p.detect(user_text))
+                                except Exception:
+                                    provider_results.append(InjectionAnalysis(0, [], "allow"))
+                            injection_result = merge_injection_analyses(
+                                [injection_result] + provider_results,
+                                inj_detect_opts,
+                            )
 
                     if injection_result.risk_score > 0:
                         self._lp._emit("injection.detected", {"analysis": injection_result})
@@ -596,20 +604,28 @@ class _WrappedCompletions:
                         ),
                     )
                     if security.jailbreak.providers:
-                        provider_results = []
-                        for p in security.jailbreak.providers:
-                            try:
-                                provider_results.append(p.detect(user_text))
-                            except Exception:
-                                pass
-                        if provider_results:
-                            jailbreak_result = merge_jailbreak_analyses(
-                                [jailbreak_result, *provider_results],
-                                JailbreakOptions(
-                                    block_threshold=security.jailbreak.block_threshold,
-                                    merge_strategy=security.jailbreak.merge_strategy,
-                                ),
-                            )
+                        cascade = security.jailbreak.cascade if security.jailbreak.cascade is not None else True
+                        ct = security.jailbreak.cascade_thresholds
+                        skip_above = ct.skip_above if ct else 0.85
+                        skip_below = ct.skip_below if ct else 0.10
+                        regex_score = jailbreak_result.risk_score
+                        skip_ml = cascade and (regex_score >= skip_above or regex_score <= skip_below)
+
+                        if not skip_ml:
+                            provider_results = []
+                            for p in security.jailbreak.providers:
+                                try:
+                                    provider_results.append(p.detect(user_text))
+                                except Exception:
+                                    pass
+                            if provider_results:
+                                jailbreak_result = merge_jailbreak_analyses(
+                                    [jailbreak_result, *provider_results],
+                                    JailbreakOptions(
+                                        block_threshold=security.jailbreak.block_threshold,
+                                        merge_strategy=security.jailbreak.merge_strategy,
+                                    ),
+                                )
                     if jailbreak_result.risk_score > 0:
                         self._lp._emit("jailbreak.detected", {"analysis": jailbreak_result})
                         if security.jailbreak.on_detect:
