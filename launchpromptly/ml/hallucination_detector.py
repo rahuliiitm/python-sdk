@@ -2,7 +2,7 @@
 ML-based hallucination detector using a cross-encoder model.
 
 Compares generated text against source text to score faithfulness.
-Uses the vectara/hallucination_evaluation_model (HHEM) by default.
+Requires a cross-encoder model (e.g. vectara/HHEM) with ONNX weights.
 
 Prefers onnxruntime + tokenizers for native inference (8-20ms).
 Falls back to transformers + torch if onnxruntime is not installed.
@@ -22,8 +22,8 @@ from launchpromptly._internal.hallucination import HallucinationResult
 class MLHallucinationDetector:
     """ML-based hallucination detector using a cross-encoder model.
 
-    Uses the ``vectara/hallucination_evaluation_model`` by default --
-    a 137M parameter cross-encoder trained to score text faithfulness.
+    Requires a cross-encoder model with ONNX weights.
+    Defaults to ``vectara/hallucination_evaluation_model`` (137M params).
 
     Tries ONNX Runtime first (8-20ms), falls back to transformers (500ms-2s).
 

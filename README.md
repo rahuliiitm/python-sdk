@@ -366,9 +366,9 @@ pip install launchpromptly[ml]
 from launchpromptly import LaunchPromptly
 from launchpromptly.ml import MLToxicityDetector, MLInjectionDetector, PresidioPIIDetector
 
-# Initialize detectors (first run downloads models)
-toxicity = MLToxicityDetector()     # unitary/toxic-bert
-injection = MLInjectionDetector()   # protectai/deberta-v3
+# Initialize detectors (first run downloads models, cached after)
+toxicity = MLToxicityDetector()     # Xenova/toxic-bert (~106MB quantized)
+injection = MLInjectionDetector()   # protectai/deberta-v3 (~704MB)
 pii = PresidioPIIDetector()         # Microsoft Presidio + spaCy NER
 
 lp = LaunchPromptly(
@@ -406,9 +406,26 @@ All ML inference runs locally — no data leaves your infrastructure.
 
 | Detector | Model | What it adds |
 |----------|-------|-------------|
-| `MLToxicityDetector` | `unitary/toxic-bert` | Hate speech, threats, obscenity, identity attacks |
+| `MLToxicityDetector` | `Xenova/toxic-bert` | Hate speech, threats, obscenity, identity attacks |
 | `MLInjectionDetector` | `protectai/deberta-v3-base-prompt-injection-v2` | Semantic prompt injection (catches obfuscated/encoded attacks) |
 | `PresidioPIIDetector` | Microsoft Presidio + spaCy | Person names, organization names, locations, medical records |
+
+### Pre-downloading models
+
+For Docker or air-gapped deployments, pre-download models at build time:
+
+```bash
+launchpromptly download-models --cache-dir /app/.models
+```
+
+Then point your detectors at the cache:
+
+```python
+MLInjectionDetector(cache_dir="/app/.models")
+MLToxicityDetector(cache_dir="/app/.models")
+```
+
+Available flags: `--models toxicity,injection` (comma-separated) and `--cache-dir <path>`.
 
 ## Privacy & data practices
 
