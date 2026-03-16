@@ -7,11 +7,31 @@ and reused across sessions.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Optional
 from urllib.request import Request, urlopen
 
 DEFAULT_CACHE_DIR = Path.home() / ".launchpromptly" / "models"
+
+_MIN_ONNX_FILE_SIZE = 1024  # 1KB -- any valid model is much larger
+_MAX_DOWNLOAD_RETRIES = 3
+_BASE_RETRY_DELAY_S = 1.0
+
+
+def validate_onnx_file(file_path: Path) -> bool:
+    """Check that a cached ONNX file looks valid.
+
+    Verifies minimum file size and ONNX protobuf magic byte (0x08 = ir_version field).
+    """
+    try:
+        if file_path.stat().st_size < _MIN_ONNX_FILE_SIZE:
+            return False
+        with open(file_path, "rb") as f:
+            header = f.read(4)
+        return len(header) >= 1 and header[0] == 0x08
+    except OSError:
+        return False
 
 _MODEL_REGISTRY: dict[str, dict] = {
     "meta-llama/Prompt-Guard-86M": {
@@ -91,9 +111,17 @@ def ensure_model(
     )
     local_onnx = model_dir / "model.onnx"
 
-    # Fast path: already cached
-    if local_onnx.exists() and (model_dir / "config.json").exists():
+    # Fast path: already cached and valid
+    if (
+        local_onnx.exists()
+        and (model_dir / "config.json").exists()
+        and validate_onnx_file(local_onnx)
+    ):
         return model_dir
+
+    # Remove corrupted ONNX file so it gets re-downloaded
+    if local_onnx.exists() and not validate_onnx_file(local_onnx):
+        local_onnx.unlink()
 
     model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -102,6 +130,14 @@ def ensure_model(
     # Download ONNX model file
     if not local_onnx.exists():
         _download_hf_file(repo, onnx_remote, local_onnx)
+
+    # Validate downloaded file
+    if not validate_onnx_file(local_onnx):
+        local_onnx.unlink()
+        raise RuntimeError(
+            f"Downloaded ONNX file for {model_id} failed integrity check. "
+            "The file may be corrupted or incomplete."
+        )
 
     # Download supporting files
     for file_path in entry["files"]:
@@ -113,7 +149,11 @@ def ensure_model(
 
 
 def _download_hf_file(repo: str, file_path: str, local_path: Path) -> None:
-    """Download a single file from HuggingFace Hub."""
+    """Download a single file from HuggingFace Hub.
+
+    Retries up to 3 times with exponential backoff on server/network errors.
+    Uses atomic write (temp file + rename) to prevent partial downloads.
+    """
     url = f"https://huggingface.co/{repo}/resolve/main/{file_path}"
 
     headers = {}
@@ -124,19 +164,37 @@ def _download_hf_file(repo: str, file_path: str, local_path: Path) -> None:
         headers["Authorization"] = f"Bearer {hf_token}"
 
     request = Request(url, headers=headers)
-    try:
-        with urlopen(request) as response:
+
+    for attempt in range(_MAX_DOWNLOAD_RETRIES):
+        try:
+            with urlopen(request) as response:
+                data = response.read()
             local_path.parent.mkdir(parents=True, exist_ok=True)
-            local_path.write_bytes(response.read())
-    except Exception as exc:
-        hint = ""
-        if "401" in str(exc):
-            hint = " This model may require authentication. Set the HF_TOKEN environment variable."
-        elif "404" in str(exc):
-            hint = f" File not found. The ONNX weights may not be published for {repo}."
-        raise RuntimeError(
-            f"Failed to download {file_path} from {repo}: {exc}.{hint}"
-        ) from exc
+            # Atomic write: temp file then rename
+            tmp_path = local_path.with_suffix(local_path.suffix + ".tmp")
+            tmp_path.write_bytes(data)
+            tmp_path.rename(local_path)
+            return
+        except Exception as exc:
+            exc_str = str(exc)
+            # Client errors (401, 404) won't change on retry
+            if "401" in exc_str:
+                raise RuntimeError(
+                    f"Failed to download {file_path} from {repo}: {exc}."
+                    " This model may require authentication. Set the HF_TOKEN environment variable."
+                ) from exc
+            if "404" in exc_str:
+                raise RuntimeError(
+                    f"Failed to download {file_path} from {repo}: {exc}."
+                    f" File not found. The ONNX weights may not be published for {repo}."
+                ) from exc
+            if attempt < _MAX_DOWNLOAD_RETRIES - 1:
+                delay = _BASE_RETRY_DELAY_S * (2 ** attempt)
+                time.sleep(delay)
+                continue
+            raise RuntimeError(
+                f"Failed to download {file_path} from {repo} after {_MAX_DOWNLOAD_RETRIES} attempts: {exc}."
+            ) from exc
 
 
 def get_cache_dir() -> Path:

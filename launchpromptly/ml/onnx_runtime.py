@@ -91,10 +91,30 @@ class OnnxSession:
                 "Install with: pip install onnxruntime"
             )
 
-        session = ort.InferenceSession(
-            str(model_dir / "model.onnx"),
-            providers=["CPUExecutionProvider"],
-        )
+        model_path = model_dir / "model.onnx"
+        try:
+            session = ort.InferenceSession(
+                str(model_path),
+                providers=["CPUExecutionProvider"],
+            )
+        except Exception as err:
+            # Detect corrupted ONNX files (protobuf parse errors, truncated files)
+            import re
+
+            if re.search(r"protobuf|onnx|parse|corrupt|truncat", str(err), re.IGNORECASE):
+                from .model_cache import remove_model
+
+                remove_model(model_id)
+                _session_cache.pop(cache_key, None)
+
+                fresh_dir = ensure_model(model_id, quantized=quantized)
+                session = ort.InferenceSession(
+                    str(fresh_dir / "model.onnx"),
+                    providers=["CPUExecutionProvider"],
+                )
+                model_dir = fresh_dir
+            else:
+                raise
 
         # Load tokenizer via the lightweight `tokenizers` library
         try:
