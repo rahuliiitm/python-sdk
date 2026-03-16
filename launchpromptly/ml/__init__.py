@@ -110,7 +110,7 @@ except ImportError:
     pass
 
 try:
-    from .model_cache import ensure_model, get_cache_dir, remove_model, list_cached_models
+    from .model_cache import ensure_model, get_cache_dir, remove_model, list_cached_models, get_registered_models, MODEL_NAME_MAP
 except Exception:
     pass
 
@@ -125,4 +125,6 @@ __all__ = [
     "get_cache_dir",
     "remove_model",
     "list_cached_models",
+    "get_registered_models",
+    "MODEL_NAME_MAP",
 ]

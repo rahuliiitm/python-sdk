@@ -17,6 +17,7 @@ Requires::
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Optional
 
 from launchpromptly._internal.jailbreak import (
@@ -47,9 +48,10 @@ class MLJailbreakDetector:
 
     def __init__(
         self,
-        model_name: str = "meta-llama/Prompt-Guard-86M",
+        model_name: str = "protectai/deberta-v3-base-prompt-injection-v2",
         device: Optional[int] = None,
-        quantized: bool = True,
+        quantized: bool = False,
+        cache_dir: Optional[str] = None,
     ) -> None:
         self._model_name = model_name
 
@@ -63,11 +65,13 @@ class MLJailbreakDetector:
         except ImportError:
             pass
 
+        _cache_path = Path(cache_dir) if cache_dir else None
+
         if use_onnx:
             from .onnx_runtime import OnnxSession
 
             session = OnnxSession.create(
-                model_name, max_length=512, quantized=quantized
+                model_name, max_length=512, quantized=quantized, cache_dir=_cache_path
             )
             self._classifier = lambda text: session.classify(text)
             return

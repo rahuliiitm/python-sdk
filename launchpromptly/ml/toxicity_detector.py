@@ -14,6 +14,7 @@ Requires::
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, List, Optional
 
 from launchpromptly._internal.content_filter import (
@@ -59,6 +60,7 @@ class MLToxicityDetector:
         model_name: str = "unitary/toxic-bert",
         threshold: float = _DEFAULT_THRESHOLD,
         device: Optional[int] = None,
+        cache_dir: Optional[str] = None,
     ) -> None:
         self._model_name = model_name
         self._threshold = threshold
@@ -73,10 +75,12 @@ class MLToxicityDetector:
         except ImportError:
             pass
 
+        _cache_path = Path(cache_dir) if cache_dir else None
+
         if use_onnx:
             from .onnx_runtime import OnnxSession
 
-            session = OnnxSession.create(model_name, max_length=512)
+            session = OnnxSession.create(model_name, max_length=512, cache_dir=_cache_path)
             self._classifier = lambda text: session.classify(text, top_k=None)
             return
 

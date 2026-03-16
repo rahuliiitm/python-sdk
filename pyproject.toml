@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "launchpromptly"
-version = "0.3.1"
+version = "0.3.2"
 description = "LaunchPromptly Python SDK — LLM privacy & security toolkit"
 readme = "README.md"
 license = "MIT"
@@ -38,6 +38,9 @@ ml-light = [
     "transformers>=4.30.0",
     "onnxruntime>=1.16.0",
 ]
+
+[project.scripts]
+launchpromptly = "launchpromptly.ml.cli:main"
 
 [project.urls]
 Homepage = "https://launchpromptly.dev"

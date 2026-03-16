@@ -437,11 +437,11 @@ Events sent to your LaunchPromptly endpoint contain metadata only:
 
 ### Optional fields
 
-You can opt in to sending `prompt_preview` and `response_text` for debugging. When enabled, these are encrypted with AES-256-GCM at rest on the dashboard. They are never stored in plaintext.
+You can opt in to sending `prompt_preview` and `response_text` for debugging. When enabled, these are encrypted with AES-256-GCM at rest on the dashboard.
 
 ### No telemetry
 
-The SDK does not phone home. It makes no analytics, tracking, or telemetry calls to LaunchPromptly. Events go to your configured endpoint only. If you don't set an endpoint, no network calls happen at all.
+The SDK does not phone home. It makes no telemetry calls to LaunchPromptly. Events go to your configured endpoint only. If you don't set an endpoint, no network calls happen at all.
 
 ## Environment Variables
 

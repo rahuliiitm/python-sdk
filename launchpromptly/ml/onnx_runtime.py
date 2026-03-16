@@ -67,6 +67,7 @@ class OnnxSession:
         *,
         max_length: int = 512,
         quantized: bool = True,
+        cache_dir: Optional[Path] = None,
     ) -> "OnnxSession":
         """Create (or retrieve cached) ONNX session for a model.
 
@@ -80,7 +81,7 @@ class OnnxSession:
         # Download model files
         from .model_cache import ensure_model
 
-        model_dir = ensure_model(model_id, quantized=quantized)
+        model_dir = ensure_model(model_id, quantized=quantized, cache_dir=cache_dir)
 
         # Load ONNX Runtime
         try:
@@ -104,10 +105,10 @@ class OnnxSession:
             if re.search(r"protobuf|onnx|parse|corrupt|truncat", str(err), re.IGNORECASE):
                 from .model_cache import remove_model
 
-                remove_model(model_id)
+                remove_model(model_id, cache_dir=cache_dir)
                 _session_cache.pop(cache_key, None)
 
-                fresh_dir = ensure_model(model_id, quantized=quantized)
+                fresh_dir = ensure_model(model_id, quantized=quantized, cache_dir=cache_dir)
                 session = ort.InferenceSession(
                     str(fresh_dir / "model.onnx"),
                     providers=["CPUExecutionProvider"],

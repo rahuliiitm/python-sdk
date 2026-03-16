@@ -34,16 +34,6 @@ def validate_onnx_file(file_path: Path) -> bool:
         return False
 
 _MODEL_REGISTRY: dict[str, dict] = {
-    "meta-llama/Prompt-Guard-86M": {
-        "onnx_file": "onnx/model.onnx",
-        "quantized_file": "onnx/model_quantized.onnx",
-        "files": [
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "config.json",
-            "special_tokens_map.json",
-        ],
-    },
     "Xenova/bert-base-NER": {
         "onnx_file": "onnx/model.onnx",
         "quantized_file": "onnx/model_quantized.onnx",
@@ -71,16 +61,37 @@ _MODEL_REGISTRY: dict[str, dict] = {
             "config.json",
         ],
     },
-    "vectara/hallucination_evaluation_model": {
+    "protectai/deberta-v3-base-prompt-injection-v2": {
         "onnx_file": "onnx/model.onnx",
-        "quantized_file": "onnx/model_quantized.onnx",
         "files": [
-            "tokenizer.json",
+            "onnx/tokenizer.json",
             "tokenizer_config.json",
             "config.json",
+            "special_tokens_map.json",
+        ],
+    },
+    "protectai/deberta-v3-small-prompt-injection-v2": {
+        "onnx_file": "onnx/model.onnx",
+        "files": [
+            "onnx/tokenizer.json",
+            "tokenizer_config.json",
+            "config.json",
+            "special_tokens_map.json",
         ],
     },
 }
+
+MODEL_NAME_MAP: dict[str, str] = {
+    "toxicity": "Xenova/toxic-bert",
+    "injection": "protectai/deberta-v3-base-prompt-injection-v2",
+    "injection-small": "protectai/deberta-v3-small-prompt-injection-v2",
+    "ner": "Xenova/bert-base-NER",
+}
+
+
+def get_registered_models() -> list[str]:
+    """Get list of all registered model IDs."""
+    return list(_MODEL_REGISTRY.keys())
 
 
 def ensure_model(
