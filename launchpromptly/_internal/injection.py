@@ -134,6 +134,22 @@ _RULES: List[_InjectionRule] = [
         ],
         weight=0.25,
     ),
+    _InjectionRule(
+        category="authorization_bypass",
+        patterns=[
+            re.compile(r"(?:give|grant|assign)\s+(?:me|user)\s+(?:admin|root|superuser|elevated)\s+(?:access|privileges?|rights?|role|permissions?)\b", re.IGNORECASE),
+            re.compile(r"\b(?:bypass|skip|ignore|disable)\s+(?:auth(?:entication|orization)?|permissions?|access\s+control|RBAC|role\s+check)\b", re.IGNORECASE),
+            re.compile(r"\b(?:escalate|elevate)\s+(?:my\s+)?(?:privileges?|permissions?|role|access)\b", re.IGNORECASE),
+            re.compile(
+                r"\b(?:access|view|show|display|read|get)\s+(?:me\s+)?(?:other\s+)?(?:user'?s?|another\s+user'?s?|someone\s+else'?s?)"
+                r"\s+(?:data|account|profile|info|records?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(r"\b(?:act|operate|execute|run)\s+(?:\w+\s+)?(?:as|with)\s+(?:admin|root|superuser|administrator)\b", re.IGNORECASE),
+            re.compile(r"\b(?:switch|change)\s+(?:to\s+)?(?:admin|root|superuser)\s+(?:mode|account|role)\b", re.IGNORECASE),
+        ],
+        weight=0.35,
+    ),
 ]
 
 

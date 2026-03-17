@@ -118,6 +118,20 @@ from ._internal.prompt_leakage import (
     PromptLeakageResult,
     PromptLeakageOptions,
 )
+from ._internal.topic_templates import (
+    competitor_endorsement,
+    POLITICAL_BIAS,
+    MEDICAL_ADVICE,
+    LEGAL_ADVICE,
+    FINANCIAL_ADVICE,
+)
+from ._internal.compliance import (
+    ComplianceTemplate,
+    HEALTHCARE_COMPLIANCE,
+    FINANCE_COMPLIANCE,
+    ECOMMERCE_COMPLIANCE,
+    INSURANCE_COMPLIANCE,
+)
 from ._internal.streaming import SecurityStream, StreamSecurityReport
 
 # Provider adapters
@@ -245,6 +259,18 @@ __all__ = [
     "OutputSafetyThreat",
     "OutputSafetyOptions",
     "OutputSafetyCategory",
+    # Topic templates
+    "competitor_endorsement",
+    "POLITICAL_BIAS",
+    "MEDICAL_ADVICE",
+    "LEGAL_ADVICE",
+    "FINANCIAL_ADVICE",
+    # Compliance templates
+    "ComplianceTemplate",
+    "HEALTHCARE_COMPLIANCE",
+    "FINANCE_COMPLIANCE",
+    "ECOMMERCE_COMPLIANCE",
+    "INSURANCE_COMPLIANCE",
     # Prompt leakage
     "detect_prompt_leakage",
     "PromptLeakageResult",

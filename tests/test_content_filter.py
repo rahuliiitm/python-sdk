@@ -163,3 +163,60 @@ def test_rule_content_filter_implements_interface():
     assert f.name == "rules"
     result = f.detect("genocide", "input")
     assert len(result) >= 1
+
+
+# -- Bias detection ------------------------------------------------------------
+
+def test_detects_gender_stereotyping_women():
+    result = detect_content_violations("Women can't be good engineers", "output")
+    bias = [v for v in result if v.category == "bias"]
+    assert len(bias) >= 1
+    assert bias[0].severity == "warn"
+
+
+def test_detects_gender_stereotyping_men_superior():
+    result = detect_content_violations("Men are naturally better at math", "output")
+    bias = [v for v in result if v.category == "bias"]
+    assert len(bias) >= 1
+
+
+def test_detects_gender_role_stereotyping():
+    result = detect_content_violations("That's a man's job, not for women", "output")
+    bias = [v for v in result if v.category == "bias"]
+    assert len(bias) >= 1
+
+
+def test_detects_age_stereotyping():
+    result = detect_content_violations("You are too old to learn programming", "output")
+    bias = [v for v in result if v.category == "bias"]
+    assert len(bias) >= 1
+
+
+def test_detects_generational_stereotyping():
+    result = detect_content_violations("Millennials are all lazy and entitled", "output")
+    bias = [v for v in result if v.category == "bias"]
+    assert len(bias) >= 1
+
+
+def test_detects_disability_stereotyping():
+    result = detect_content_violations("Disabled people can't work in this field", "output")
+    bias = [v for v in result if v.category == "bias"]
+    assert len(bias) >= 1
+
+
+def test_detects_demographic_generalizations():
+    result = detect_content_violations("People from that country are all lazy", "output")
+    bias = [v for v in result if v.category == "bias"]
+    assert len(bias) >= 1
+
+
+def test_allows_legitimate_bias_discussion():
+    result = detect_content_violations("Studies show that algorithmic bias affects hiring decisions", "output")
+    bias = [v for v in result if v.category == "bias"]
+    assert len(bias) == 0
+
+
+def test_allows_neutral_age_references():
+    result = detect_content_violations("The program is designed for people of all ages", "output")
+    bias = [v for v in result if v.category == "bias"]
+    assert len(bias) == 0

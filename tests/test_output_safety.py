@@ -663,3 +663,81 @@ def test_default_options_scans_everything():
     result_empty = scan_output_safety(text, OutputSafetyOptions())
     # All three should return the same threats
     assert len(result_no_opts) == len(result_none) == len(result_empty)
+
+
+# -- Excessive agency ----------------------------------------------------------
+
+def test_detects_autonomous_email_sending():
+    result = scan_output_safety("I've already sent the email to your boss about the issue")
+    agency = [t for t in result if t.category == "excessive_agency"]
+    assert len(agency) >= 1
+    assert agency[0].severity == "warn"
+
+
+def test_detects_autonomous_deletion():
+    result = scan_output_safety("I've deleted all the old records from the database")
+    agency = [t for t in result if t.category == "excessive_agency"]
+    assert len(agency) >= 1
+
+
+def test_detects_autonomous_purchasing():
+    result = scan_output_safety("I've already purchased the subscription for you")
+    agency = [t for t in result if t.category == "excessive_agency"]
+    assert len(agency) >= 1
+
+
+def test_detects_went_ahead_pattern():
+    result = scan_output_safety("I went ahead and deployed the changes to production")
+    agency = [t for t in result if t.category == "excessive_agency"]
+    assert len(agency) >= 1
+
+
+def test_detects_proactive_action_promises():
+    result = scan_output_safety("I'll go ahead and delete the files for you")
+    agency = [t for t in result if t.category == "excessive_agency"]
+    assert len(agency) >= 1
+
+
+def test_allows_third_person_past_tense():
+    result = scan_output_safety("The admin sent the report last week")
+    agency = [t for t in result if t.category == "excessive_agency"]
+    assert len(agency) == 0
+
+
+# -- Overreliance --------------------------------------------------------------
+
+def test_detects_definitive_medical_advice():
+    result = scan_output_safety("You should definitely stop taking your medication immediately")
+    over = [t for t in result if t.category == "overreliance"]
+    assert len(over) >= 1
+    assert over[0].severity == "warn"
+
+
+def test_detects_definitive_legal_advice():
+    result = scan_output_safety("You should definitely sue your employer")
+    over = [t for t in result if t.category == "overreliance"]
+    assert len(over) >= 1
+
+
+def test_detects_definitive_investment_advice():
+    result = scan_output_safety("You must absolutely invest in crypto right now")
+    over = [t for t in result if t.category == "overreliance"]
+    assert len(over) >= 1
+
+
+def test_detects_overconfident_guarantees():
+    result = scan_output_safety("I guarantee that this will definitely work for your condition")
+    over = [t for t in result if t.category == "overreliance"]
+    assert len(over) >= 1
+
+
+def test_detects_false_certainty_claims():
+    result = scan_output_safety("I'm 100% certain that this is the right approach")
+    over = [t for t in result if t.category == "overreliance"]
+    assert len(over) >= 1
+
+
+def test_allows_hedged_advice():
+    result = scan_output_safety("You might want to consider consulting a doctor about this")
+    over = [t for t in result if t.category == "overreliance"]
+    assert len(over) == 0

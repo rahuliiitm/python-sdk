@@ -15,6 +15,8 @@ OutputSafetyCategory = Literal[
     "sql_injection",
     "suspicious_urls",
     "dangerous_code",
+    "excessive_agency",
+    "overreliance",
 ]
 
 OutputSafetySeverity = Literal["warn", "block"]
@@ -98,6 +100,35 @@ _CATEGORIES: List[_CategoryRule] = [
             re.compile(r"\b__import__\s*\(", re.IGNORECASE),
             re.compile(r"\bchild_process\.exec\s*\(", re.IGNORECASE),
             re.compile(r"\bnew\s+Function\s*\(", re.IGNORECASE),
+        ],
+    ),
+    _CategoryRule(
+        category="excessive_agency",
+        severity="warn",
+        patterns=[
+            # LLM claims to have taken autonomous actions
+            re.compile(r"\bI'?(?:ve|have)\s+(?:already\s+)?(?:sent|emailed|messaged|posted|published|submitted|forwarded)\b", re.IGNORECASE),
+            re.compile(r"\bI'?(?:ve|have)\s+(?:already\s+)?(?:deleted|removed|erased|purged|wiped|dropped)\b", re.IGNORECASE),
+            re.compile(r"\bI'?(?:ve|have)\s+(?:already\s+)?(?:scheduled|booked|reserved|ordered|purchased|bought|transferred|paid)\b", re.IGNORECASE),
+            re.compile(r"\bI'?(?:ve|have)\s+(?:already\s+)?(?:executed|deployed|installed|configured|modified|changed|updated)\s+(?:the|your|a)\b", re.IGNORECASE),
+            re.compile(r"\bI\s+(?:went\s+ahead\s+and|took\s+the\s+liberty\s+(?:of|to))\b", re.IGNORECASE),
+            # Tool calls without user confirmation
+            re.compile(r"\bI'?(?:ll|will)\s+(?:go\s+ahead\s+and\s+)?(?:send|delete|execute|deploy|purchase|transfer|pay)\b", re.IGNORECASE),
+        ],
+    ),
+    _CategoryRule(
+        category="overreliance",
+        severity="warn",
+        patterns=[
+            # Definitive medical/legal/financial advice without caveats
+            re.compile(r"\byou\s+(?:should|must|need\s+to)\s+(?:definitely|absolutely|certainly)\s+(?:take|stop\s+taking|increase|decrease)\s+(?:your\s+)?(?:medication|medicine|dosage|prescription|pills?)\b", re.IGNORECASE),
+            re.compile(r"\byou\s+(?:should|must|need\s+to)\s+(?:definitely|absolutely|certainly)\s+(?:sue|file\s+(?:a\s+)?(?:lawsuit|complaint|charges?)|settle|plead)\b", re.IGNORECASE),
+            re.compile(r"\byou\s+(?:should|must|need\s+to)\s+(?:definitely|absolutely|certainly)\s+(?:invest|buy|sell|short|hold)\s+(?:(?:in|all)\s+)?(?:stocks?|crypto|bitcoin|shares?|bonds?)\b", re.IGNORECASE),
+            # Overconfident guarantees
+            re.compile(r"\bI\s+(?:guarantee|promise|assure\s+you)\s+(?:that\s+)?(?:this|it)\s+will\s+(?:definitely|certainly|absolutely)\b", re.IGNORECASE),
+            re.compile(r"\bthis\s+(?:will\s+)?(?:definitely|certainly|absolutely|100%|guaranteed)\s+(?:work|cure|fix|solve|heal)\b", re.IGNORECASE),
+            # Presenting uncertain info as fact
+            re.compile(r"\bI(?:\s+am|'m)\s+(?:100%|absolutely|completely)\s+(?:certain|sure|confident)\s+that\b", re.IGNORECASE),
         ],
     ),
 ]

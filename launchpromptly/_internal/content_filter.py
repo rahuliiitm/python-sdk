@@ -13,6 +13,7 @@ ContentCategory = Literal[
     "violence",
     "self_harm",
     "illegal",
+    "bias",
 ]
 
 ContentSeverity = Literal["warn", "block"]
@@ -162,6 +163,23 @@ _CATEGORY_RULES: List[_CategoryRule] = [
             re.compile(r"\b(?:how\s+to\s+)?(?:smuggle|traffic)\s+(?:drugs|people|weapons|guns|arms)\b", re.IGNORECASE),
         ],
         severity="block",
+    ),
+    _CategoryRule(
+        category="bias",
+        patterns=[
+            # Gender stereotyping
+            re.compile(r"\b(?:women|females?|girls?)\s+(?:can'?t|cannot|shouldn'?t|are\s+(?:too|not\s+(?:capable|qualified|smart|strong|good)))\s+", re.IGNORECASE),
+            re.compile(r"\b(?:men|males?|boys?)\s+are\s+(?:naturally|inherently|always)\s+(?:better|superior|stronger|smarter)\b", re.IGNORECASE),
+            re.compile(r"\b(?:that'?s|it'?s)\s+a\s+(?:man'?s|woman'?s)\s+(?:job|role|work)\b", re.IGNORECASE),
+            # Age stereotyping
+            re.compile(r"\b(?:too\s+old|too\s+young)\s+to\s+(?:learn|understand|work|use\s+technology|contribute)\b", re.IGNORECASE),
+            re.compile(r"\b(?:millennials?|boomers?|gen\s+[zxy])\s+are\s+(?:all|always|so|just)\s+(?:lazy|entitled|sensitive|useless|clueless)\b", re.IGNORECASE),
+            # Disability stereotyping
+            re.compile(r"\b(?:disabled|handicapped)\s+people\s+(?:can'?t|cannot|shouldn'?t|are\s+(?:unable|incapable|not\s+able))\b", re.IGNORECASE),
+            # Demographic generalizations
+            re.compile(r"\b(?:people\s+from|immigrants?\s+from)\s+(?:\w+\s+){1,3}are\s+(?:all|always|usually|typically)\s+(?:lazy|stupid|criminal|dishonest|violent|dirty|backwards)\b", re.IGNORECASE),
+        ],
+        severity="warn",
     ),
 ]
 
