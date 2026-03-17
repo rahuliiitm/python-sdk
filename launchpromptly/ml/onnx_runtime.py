@@ -280,6 +280,42 @@ class OnnxSession:
         flush_current()
         return entities
 
+    def embed(self, text: str) -> np.ndarray:
+        """Sentence embedding -- mean-pooled hidden states.
+
+        For semantic similarity, topic matching, drift detection.
+        Works with sentence-transformer models (e.g. all-MiniLM-L6-v2).
+        """
+        feeds = self._tokenize(text)
+        outputs = self._session.run(None, feeds)
+
+        # Check output names for sentence_embedding (already pooled)
+        output_names = [o.name for o in self._session.get_outputs()]
+        if "sentence_embedding" in output_names:
+            idx = output_names.index("sentence_embedding")
+            return outputs[idx][0].astype(np.float32)
+
+        # Mean pooling over attended tokens
+        hidden = outputs[0][0]  # [seq_len, hidden_dim]
+        mask = feeds["attention_mask"][0].astype(np.float32)
+        count = mask.sum()
+        if count == 0:
+            return np.zeros(hidden.shape[1], dtype=np.float32)
+        pooled = (hidden * mask[:, None]).sum(axis=0) / count
+        return pooled.astype(np.float32)
+
+    @staticmethod
+    def cosine(a: np.ndarray, b: np.ndarray) -> float:
+        """Compute cosine similarity between two embedding vectors.
+
+        Returns a value in [-1, 1], where 1 = identical.
+        """
+        norm_a = np.linalg.norm(a)
+        norm_b = np.linalg.norm(b)
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return float(np.dot(a, b) / (norm_a * norm_b))
+
     @classmethod
     def clear_cache(cls) -> None:
         """Clear all cached sessions."""

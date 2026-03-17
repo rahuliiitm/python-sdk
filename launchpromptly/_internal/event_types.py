@@ -99,6 +99,25 @@ class PromptLeakagePayload:
 
 
 @dataclass
+class ContextEnginePayload:
+    constraint_count: int
+    role: Optional[str]
+    allowed_topic_count: int
+    restricted_topic_count: int
+    forbidden_action_count: int
+    grounding_mode: str
+
+
+@dataclass
+class ResponseJudgePayload:
+    violated: bool
+    compliance_score: float
+    violation_count: int
+    violation_types: List[str]
+    severity: Literal["low", "medium", "high"]
+
+
+@dataclass
 class IngestEventPayload:
     """Payload shape for a single LLM event sent to the LaunchPromptly API."""
 
@@ -133,6 +152,8 @@ class IngestEventPayload:
     topic_violation: Optional[TopicViolationPayload] = None
     output_safety: Optional[OutputSafetyPayload] = None
     prompt_leakage: Optional[PromptLeakagePayload] = None
+    context_engine: Optional[ContextEnginePayload] = None
+    response_judge: Optional[ResponseJudgePayload] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to a JSON-serialisable dict, omitting None values."""
@@ -258,6 +279,23 @@ class IngestEventPayload:
                 "leaked": self.prompt_leakage.leaked,
                 "similarity": self.prompt_leakage.similarity,
                 "metaResponseDetected": self.prompt_leakage.meta_response_detected,
+            }
+        if self.context_engine is not None:
+            d["contextEngine"] = {
+                "constraintCount": self.context_engine.constraint_count,
+                "role": self.context_engine.role,
+                "allowedTopicCount": self.context_engine.allowed_topic_count,
+                "restrictedTopicCount": self.context_engine.restricted_topic_count,
+                "forbiddenActionCount": self.context_engine.forbidden_action_count,
+                "groundingMode": self.context_engine.grounding_mode,
+            }
+        if self.response_judge is not None:
+            d["responseJudge"] = {
+                "violated": self.response_judge.violated,
+                "complianceScore": self.response_judge.compliance_score,
+                "violationCount": self.response_judge.violation_count,
+                "violationTypes": self.response_judge.violation_types,
+                "severity": self.response_judge.severity,
             }
 
         return d

@@ -105,6 +105,43 @@ except ImportError as exc:
 
 
 try:
+    from .embedding_provider import MLEmbeddingProvider
+except ImportError as exc:
+    _import_errors["MLEmbeddingProvider"] = str(exc)
+
+    class MLEmbeddingProvider:  # type: ignore[no-redef]
+        """Placeholder that raises when ONNX deps are missing."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "MLEmbeddingProvider requires onnxruntime and tokenizers. "
+                f"Install with: pip install launchpromptly[ml-onnx]\n"
+                f"Original error: {_import_errors['MLEmbeddingProvider']}"
+            )
+
+
+try:
+    from .response_judge import MLResponseJudge
+except ImportError as exc:
+    _import_errors["MLResponseJudge"] = str(exc)
+
+    class MLResponseJudge:  # type: ignore[no-redef]
+        """Placeholder that raises when ONNX deps are missing."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "MLResponseJudge requires onnxruntime and tokenizers. "
+                f"Install with: pip install launchpromptly[ml-onnx]\n"
+                f"Original error: {_import_errors['MLResponseJudge']}"
+            )
+
+
+try:
+    from .attack_embeddings import load_attack_index, match_against_index, has_attack_match
+except ImportError:
+    pass
+
+try:
     from .onnx_runtime import OnnxSession
 except ImportError:
     pass
@@ -120,6 +157,11 @@ __all__ = [
     "MLJailbreakDetector",
     "MLToxicityDetector",
     "MLHallucinationDetector",
+    "MLEmbeddingProvider",
+    "MLResponseJudge",
+    "load_attack_index",
+    "match_against_index",
+    "has_attack_match",
     "OnnxSession",
     "ensure_model",
     "get_cache_dir",

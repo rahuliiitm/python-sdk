@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from ._internal.injection import InjectionAnalysis
     from ._internal.jailbreak import JailbreakAnalysis
     from ._internal.model_policy import ModelPolicyViolation
+    from ._internal.response_judge import ResponseJudgment
     from ._internal.schema_validator import SchemaValidationError
     from ._internal.tool_guard import ToolGuardViolation
     from ._internal.topic_guard import TopicViolation
@@ -125,3 +126,15 @@ class ConversationGuardError(Exception):
     def __init__(self, violation: ConversationGuardViolation) -> None:
         self.violation = violation
         super().__init__(f"Conversation guard violation: {violation.type} -- {violation.details}")
+
+
+class ResponseBoundaryError(Exception):
+    """Raised when a response violates boundaries extracted by the Context Engine."""
+
+    def __init__(self, judgment: ResponseJudgment) -> None:
+        self.judgment = judgment
+        types = ", ".join(sorted({v.type for v in judgment.violations}))
+        super().__init__(
+            f"Response boundary violation: {types} "
+            f"(compliance: {judgment.compliance_score:.2f}, severity: {judgment.severity})"
+        )

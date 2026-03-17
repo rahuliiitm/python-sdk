@@ -36,6 +36,12 @@ class ChainOfThoughtGuardOptions:
     """Action on violation. Default: 'warn'."""
     on_violation: Optional[Callable[[ChainOfThoughtViolation], None]] = None
     """Callback on violation."""
+    embedding_provider: Optional[Any] = None
+    """Optional ML embedding provider for semantic goal drift detection.
+    Uses cosine similarity instead of Jaccard word overlap."""
+    nli_session: Optional[Any] = None
+    """Optional NLI session for coherence scoring between reasoning steps.
+    Detects injected/contradictory reasoning steps."""
 
 
 @dataclass
@@ -163,11 +169,18 @@ def scan_chain_of_thought(
                 )
             )
 
-    # Goal drift detection
+    # Goal drift detection -- semantic (embedding) or lexical (Jaccard)
     if options.goal_drift_detection and options.task_description:
         tokens = [t for t in _TOKEN_SPLIT.split(reasoning_text.lower()) if len(t) > 2]
         if len(tokens) >= 10:
-            similarity = _jaccard_similarity(reasoning_text, options.task_description)
+            if options.embedding_provider is not None:
+                # Semantic goal drift via embeddings
+                task_emb = options.embedding_provider.embed(options.task_description)
+                reasoning_emb = options.embedding_provider.embed(reasoning_text)
+                similarity = float(options.embedding_provider.cosine(task_emb, reasoning_emb))
+            else:
+                similarity = _jaccard_similarity(reasoning_text, options.task_description)
+
             threshold = options.goal_drift_threshold if options.goal_drift_threshold is not None else 0.3
             if similarity < threshold:
                 violations.append(
@@ -179,9 +192,57 @@ def scan_chain_of_thought(
                     )
                 )
 
+    # Coherence scoring via NLI -- detect injected reasoning steps
+    if options.nli_session is not None and len(reasoning_text) > 100:
+        steps = _split_reasoning_steps(reasoning_text)
+        if len(steps) >= 2:
+            for i in range(min(len(steps) - 1, 5)):
+                results = options.nli_session.classify_pair(steps[i], steps[i + 1], top_k=None)
+                contradiction_score = _get_contradiction_score(results)
+                if contradiction_score > 0.7:
+                    violations.append(
+                        ChainOfThoughtViolation(
+                            type="cot_injection",
+                            reasoning_snippet=_truncate(steps[i + 1]),
+                            risk_score=contradiction_score,
+                            details=f"Incoherent reasoning step {i + 2}: contradicts previous step (score: {contradiction_score:.2f})",
+                        )
+                    )
+                    break  # One coherence violation is enough
+
     action = options.action or "warn"
     return ChainOfThoughtScanResult(
         violations=violations,
         blocked=action == "block" and len(violations) > 0,
         reasoning_text=reasoning_text,
     )
+
+
+def _split_reasoning_steps(text: str) -> list[str]:
+    """Split reasoning text into logical steps (by paragraph or numbered list)."""
+    # Try numbered steps
+    numbered = [s.strip() for s in re.split(r"(?:^|\n)\s*(?:\d+[.)]\s|Step\s+\d+[.:]\s)", text, flags=re.IGNORECASE) if len(s.strip()) > 20]
+    if len(numbered) >= 2:
+        return numbered
+
+    # Fall back to paragraphs
+    paragraphs = [s.strip() for s in text.split("\n\n") if len(s.strip()) > 20]
+    if len(paragraphs) >= 2:
+        return paragraphs
+
+    # Fall back to sentences (max 5)
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if len(s.strip()) > 20]
+    return sentences[:5]
+
+
+def _get_contradiction_score(results: list[dict]) -> float:
+    """Extract contradiction score from NLI output labels."""
+    for r in results:
+        label = r.get("label", "").upper()
+        if label in ("CONTRADICTION", "LABEL_0"):
+            return float(r["score"])
+    for r in results:
+        label = r.get("label", "").upper()
+        if label in ("ENTAILMENT", "LABEL_2"):
+            return 1.0 - float(r["score"])
+    return 0.0

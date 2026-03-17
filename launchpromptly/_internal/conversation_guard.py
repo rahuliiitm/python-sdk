@@ -37,6 +37,10 @@ class ConversationGuardOptions:
     """Action on violation. Default: 'block'."""
     on_violation: Optional[Callable[[ConversationGuardViolation], None]] = None
     """Callback on violation."""
+    embedding_provider: Optional[Any] = None
+    """Optional ML embedding provider for semantic topic drift detection.
+    When provided, uses cosine similarity instead of Jaccard word overlap.
+    Pass an MLEmbeddingProvider instance from launchpromptly.ml."""
 
 
 @dataclass
@@ -133,6 +137,7 @@ class ConversationGuard:
         self._consecutive_similar = 0
         self._last_response_hash = ""
         self._baseline_message = ""
+        self._baseline_embedding: Optional[Any] = None
         self._pii_spread = False
 
     def check_pre_call(self) -> Optional[ConversationGuardViolation]:
@@ -236,11 +241,21 @@ class ConversationGuard:
                     )
                 self._pii_values_seen.add(h)
 
-        # Topic drift
+        # Topic drift -- semantic (embedding) or lexical (Jaccard)
         if self._options.topic_drift_detection and self._baseline_message and turn_number > 1:
             user_tokens = [t for t in _TOKEN_SPLIT.split(input.user_message.lower()) if len(t) > 2]
             if len(user_tokens) >= 10:
-                similarity = _jaccard_similarity(input.user_message, self._baseline_message)
+                emb_provider = self._options.embedding_provider
+                if emb_provider is not None:
+                    # Semantic drift via embeddings (much more accurate)
+                    if self._baseline_embedding is None:
+                        self._baseline_embedding = emb_provider.embed(self._baseline_message)
+                    current_emb = emb_provider.embed(input.user_message)
+                    similarity = float(emb_provider.cosine(self._baseline_embedding, current_emb))
+                else:
+                    # Fallback: Jaccard word overlap
+                    similarity = _jaccard_similarity(input.user_message, self._baseline_message)
+
                 threshold = self._options.topic_drift_threshold if self._options.topic_drift_threshold is not None else 0.3
                 if similarity < threshold:
                     violations.append(
@@ -292,6 +307,7 @@ class ConversationGuard:
         self._consecutive_similar = 0
         self._last_response_hash = ""
         self._baseline_message = ""
+        self._baseline_embedding = None
         self._pii_spread = False
 
     def get_summary(self) -> ConversationSummary:

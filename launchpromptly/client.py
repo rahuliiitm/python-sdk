@@ -40,7 +40,9 @@ from ._internal.cost_guard import CostGuard
 from ._internal.content_filter import detect_content_violations, has_blocking_violation, ContentViolation
 from ._internal.model_policy import check_model_policy
 from ._internal.streaming import SecurityStream, StreamGuardEngine, StreamSecurityReport
-from ._internal.event_types import StreamGuardEventPayload
+from ._internal.event_types import StreamGuardEventPayload, ContextEnginePayload, ResponseJudgePayload
+from ._internal.context_engine import extract_context, ContextProfile
+from ._internal.response_judge import judge_response, merge_judgments, ResponseJudgment
 
 _DEFAULT_ENDPOINT = "https://api.launchpromptly.dev"
 
@@ -275,6 +277,15 @@ class LaunchPromptly:
         except Exception:
             pass  # Fire-and-forget — feedback is non-critical
 
+    async def red_team(
+        self,
+        wrapped_client: Any,
+        options: Optional[Any] = None,
+    ) -> Any:
+        """Run automated red team attacks against a wrapped client."""
+        from .redteam.runner import run_red_team
+        return await run_red_team(wrapped_client, self, options)
+
     async def flush(self) -> None:
         """Flush all pending events to the API."""
         await self._batcher.flush()
@@ -375,6 +386,8 @@ class _WrappedCompletions:
         output_safety_threats: list[OutputSafetyThreat] = []
         prompt_leakage_result: Optional[PromptLeakageResult] = None
         hallucination_result = None
+        context_profile: Optional[ContextProfile] = None
+        response_judgment_result: Optional[ResponseJudgment] = None
         cost_violation = None
         input_content_violations: list[ContentViolation] = []
         output_content_violations: list[ContentViolation] = []
@@ -542,6 +555,17 @@ class _WrappedCompletions:
             system_prompt_text = "\n".join(
                 m.get("content", "") for m in _messages if m.get("role") == "system"
             ) or None
+
+            # Context Engine (L3) — extract constraints from system prompt
+            if security.context_engine and security.context_engine.enabled is not False:
+                from ._internal.context_engine import ContextEngineOptions
+                prompt = security.context_engine.system_prompt or system_prompt_text
+                if prompt:
+                    context_profile = extract_context(
+                        prompt,
+                        ContextEngineOptions(cache=security.context_engine.cache_profiles is not False),
+                    )
+                    self._lp._emit("context.extracted", {"profile": context_profile})
 
             # 3. Injection detection
             inj_opts = security.injection
@@ -855,6 +879,37 @@ class _WrappedCompletions:
                                 f"Hallucination detected (faithfulness: {hallucination_result.faithfulness_score:.2f})"
                             )
 
+            # Post-call: response judge (L4) — check response against L3 constraints
+            if security.response_judge and security.response_judge.enabled is not False and response_text and context_profile:
+                from ._internal.response_judge import ResponseJudgeOptions
+                response_judgment_result = judge_response(
+                    response_text,
+                    context_profile,
+                    ResponseJudgeOptions(threshold=security.response_judge.threshold),
+                )
+
+                if security.response_judge.providers:
+                    provider_results: list[ResponseJudgment] = []
+                    for p in security.response_judge.providers:
+                        try:
+                            provider_results.append(p.judge(response_text, context_profile))
+                        except Exception:
+                            pass
+                    if provider_results:
+                        response_judgment_result = merge_judgments(
+                            [response_judgment_result] + provider_results
+                        )
+
+                if response_judgment_result.violated:
+                    self._lp._emit("context.violation", {"judgment": response_judgment_result})
+                    if security.response_judge.on_violation:
+                        security.response_judge.on_violation(response_judgment_result)  # type: ignore[operator]
+
+                    if not is_shadow and security.response_judge.block_on_violation:
+                        from .errors import ResponseBoundaryError
+                        self._lp._emit("response.boundary_violation", {"judgment": response_judgment_result})
+                        raise ResponseBoundaryError(response_judgment_result)
+
             # Post-call: secret detection (output)
             if security.secret_detection and security.secret_detection.enabled is not False and security.secret_detection.scan_response is not False and response_text:
                 output_secret_detections = detect_secrets(
@@ -934,6 +989,8 @@ class _WrappedCompletions:
                 prompt_leakage_result=prompt_leakage_result,
                 hallucination_result=hallucination_result,
                 response_text=response_text,
+                context_profile=context_profile,
+                response_judgment_result=response_judgment_result,
             )
         except Exception:
             pass  # SDK must never throw
@@ -962,6 +1019,8 @@ class _WrappedCompletions:
         prompt_leakage_result: Optional[PromptLeakageResult] = None,
         hallucination_result: Any = None,
         response_text: Optional[str] = None,
+        context_profile: Optional[ContextProfile] = None,
+        response_judgment_result: Optional[ResponseJudgment] = None,
     ) -> None:
         usage = getattr(result, "usage", None)
         if usage is None:
@@ -1144,6 +1203,25 @@ class _WrappedCompletions:
                     "faithfulness_score": hallucination_result.faithfulness_score,
                     "severity": hallucination_result.severity,
                 }
+
+            if context_profile:
+                event.context_engine = ContextEnginePayload(
+                    constraint_count=len(context_profile.constraints),
+                    role=context_profile.role,
+                    allowed_topic_count=len(context_profile.allowed_topics),
+                    restricted_topic_count=len(context_profile.restricted_topics),
+                    forbidden_action_count=len(context_profile.forbidden_actions),
+                    grounding_mode=context_profile.grounding_mode,
+                )
+
+            if response_judgment_result:
+                event.response_judge = ResponseJudgePayload(
+                    violated=response_judgment_result.violated,
+                    compliance_score=response_judgment_result.compliance_score,
+                    violation_count=len(response_judgment_result.violations),
+                    violation_types=list(set(v.type for v in response_judgment_result.violations)),
+                    severity=response_judgment_result.severity,
+                )
 
         self._lp._batcher.enqueue(event)
 

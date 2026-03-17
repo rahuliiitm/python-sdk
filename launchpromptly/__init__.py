@@ -13,6 +13,7 @@ from .errors import (
     ToolGuardError,
     ChainOfThoughtError,
     ConversationGuardError,
+    ResponseBoundaryError,
 )
 from .types import (
     CustomerContext,
@@ -135,7 +136,46 @@ from ._internal.compliance import (
     ECOMMERCE_COMPLIANCE,
     INSURANCE_COMPLIANCE,
 )
+from ._internal.context_engine import (
+    extract_context,
+    clear_context_cache,
+    ContextProfile,
+    Constraint,
+    ConstraintType,
+    GroundingMode,
+    ContextEngineOptions,
+    ContextExtractorProvider,
+    ContextEngineSecurityOptions,
+)
+from ._internal.response_judge import (
+    judge_response,
+    merge_judgments,
+    BoundaryViolationType,
+    BoundaryViolation,
+    ResponseJudgment,
+    ResponseJudgeOptions,
+    ResponseJudgeProvider,
+    ResponseJudgeSecurityOptions,
+)
 from ._internal.streaming import SecurityStream, StreamSecurityReport
+
+# Red team engine
+from .redteam import (
+    get_built_in_attacks,
+    inject_system_prompt,
+    BUILT_IN_ATTACKS,
+    analyze_attack_result,
+    generate_report,
+    AttackCategory,
+    AttackPayload,
+    AttackOutcome,
+    AttackResult,
+    RedTeamOptions,
+    RedTeamProgress,
+    RedTeamReport,
+    CategoryScore,
+    Vulnerability,
+)
 from ._internal.tool_guard import (
     check_tool_calls,
     detect_dangerous_args,
@@ -321,6 +361,26 @@ __all__ = [
     "ChainOfThoughtViolation",
     "ChainOfThoughtScanResult",
     "ChainOfThoughtError",
+    # Context engine
+    "extract_context",
+    "clear_context_cache",
+    "ContextProfile",
+    "Constraint",
+    "ConstraintType",
+    "GroundingMode",
+    "ContextEngineOptions",
+    "ContextExtractorProvider",
+    "ContextEngineSecurityOptions",
+    # Response judge
+    "judge_response",
+    "merge_judgments",
+    "BoundaryViolationType",
+    "BoundaryViolation",
+    "ResponseJudgment",
+    "ResponseJudgeOptions",
+    "ResponseJudgeProvider",
+    "ResponseJudgeSecurityOptions",
+    "ResponseBoundaryError",
     # Conversation guard
     "ConversationGuard",
     "ConversationGuardOptions",
@@ -331,6 +391,21 @@ __all__ = [
     # Streaming
     "SecurityStream",
     "StreamSecurityReport",
+    # Red team engine
+    "get_built_in_attacks",
+    "inject_system_prompt",
+    "BUILT_IN_ATTACKS",
+    "analyze_attack_result",
+    "generate_report",
+    "AttackCategory",
+    "AttackPayload",
+    "AttackOutcome",
+    "AttackResult",
+    "RedTeamOptions",
+    "RedTeamProgress",
+    "RedTeamReport",
+    "CategoryScore",
+    "Vulnerability",
     # Provider adapters
     "wrap_anthropic_client",
     "extract_anthropic_message_texts",
@@ -346,4 +421,4 @@ __all__ = [
     "extract_gemini_content_text",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.5.0"

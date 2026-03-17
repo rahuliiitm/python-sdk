@@ -32,7 +32,7 @@ from launchpromptly.types import (
 def test_true_returns_all_guardrails():
     result = resolve_guardrail_list(True)
     assert result == _ALL_ML_GUARDRAILS
-    assert len(result) == 5
+    assert len(result) == 6
 
 
 def test_false_returns_empty():

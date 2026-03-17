@@ -79,6 +79,24 @@ _MODEL_REGISTRY: dict[str, dict] = {
             "special_tokens_map.json",
         ],
     },
+    "Xenova/all-MiniLM-L6-v2": {
+        "onnx_file": "onnx/model.onnx",
+        "quantized_file": "onnx/model_quantized.onnx",
+        "files": [
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "config.json",
+        ],
+    },
+    "cross-encoder/ms-marco-MiniLM-L-6-v2": {
+        "onnx_file": "onnx/model.onnx",
+        "quantized_file": "onnx/model_quantized.onnx",
+        "files": [
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "config.json",
+        ],
+    },
 }
 
 MODEL_NAME_MAP: dict[str, str] = {
@@ -86,6 +104,8 @@ MODEL_NAME_MAP: dict[str, str] = {
     "injection": "protectai/deberta-v3-base-prompt-injection-v2",
     "injection-small": "protectai/deberta-v3-small-prompt-injection-v2",
     "ner": "Xenova/bert-base-NER",
+    "embedding": "Xenova/all-MiniLM-L6-v2",
+    "nli": "cross-encoder/ms-marco-MiniLM-L-6-v2",
 }
 
 

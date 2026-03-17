@@ -22,6 +22,8 @@ _PRESETS: dict[str, dict[str, dict]] = {
         "unicode_sanitizer": {"action": "block", "detect_homoglyphs": True},
         "tool_guard": {"enabled": True, "dangerous_arg_detection": True, "action": "block"},
         "chain_of_thought": {"enabled": True, "injection_detection": True, "action": "block"},
+        "context_engine": {"enabled": True, "enhance_injection": True},
+        "response_judge": {"enabled": True, "threshold": 0.6, "block_on_violation": True},
     },
     "balanced": {
         "injection": {"block_threshold": 0.7, "block_on_high_risk": True},
@@ -32,6 +34,8 @@ _PRESETS: dict[str, dict[str, dict]] = {
         "unicode_sanitizer": {"action": "strip", "detect_homoglyphs": True},
         "tool_guard": {"enabled": True, "dangerous_arg_detection": True, "action": "warn"},
         "chain_of_thought": {"enabled": True, "injection_detection": True, "action": "warn"},
+        "context_engine": {"enabled": True, "enhance_injection": True},
+        "response_judge": {"enabled": True, "threshold": 0.5, "block_on_violation": False},
     },
     "permissive": {
         "injection": {"block_threshold": 0.85, "block_on_high_risk": False},
@@ -41,6 +45,8 @@ _PRESETS: dict[str, dict[str, dict]] = {
         "secret_detection": {"action": "warn"},
         "unicode_sanitizer": {"action": "warn"},
         "tool_guard": {"enabled": True, "dangerous_arg_detection": True, "action": "flag"},
+        "context_engine": {"enabled": True},
+        "response_judge": {"enabled": True, "threshold": 0.3, "block_on_violation": False},
     },
 }
 
@@ -55,6 +61,8 @@ def _get_type_for_key(key: str):
         UnicodeSanitizerSecurityOptions,
     )
     from .content_filter import ContentFilterOptions
+    from .context_engine import ContextEngineSecurityOptions
+    from .response_judge import ResponseJudgeSecurityOptions
     from .tool_guard import ToolGuardOptions
     from .cot_guard import ChainOfThoughtGuardOptions
 
@@ -65,6 +73,8 @@ def _get_type_for_key(key: str):
         "secret_detection": SecretDetectionSecurityOptions,
         "unicode_sanitizer": UnicodeSanitizerSecurityOptions,
         "content_filter": ContentFilterOptions,
+        "context_engine": ContextEngineSecurityOptions,
+        "response_judge": ResponseJudgeSecurityOptions,
         "tool_guard": ToolGuardOptions,
         "chain_of_thought": ChainOfThoughtGuardOptions,
     }

@@ -5,7 +5,9 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, 
 
 if TYPE_CHECKING:
     from ._internal.content_filter import ContentFilterOptions
+    from ._internal.context_engine import ContextEngineSecurityOptions
     from ._internal.conversation_guard import ConversationGuardOptions
+    from ._internal.response_judge import ResponseJudgeSecurityOptions
     from ._internal.cost_guard import CostGuardOptions
     from ._internal.cot_guard import ChainOfThoughtGuardOptions
     from ._internal.injection import InjectionAnalysis, InjectionDetectorProvider
@@ -232,6 +234,8 @@ class SecurityOptions:
     hallucination: Optional[HallucinationSecurityOptions] = None
     tool_guard: Optional[ToolGuardOptions] = None
     chain_of_thought: Optional[ChainOfThoughtGuardOptions] = None
+    context_engine: Optional[ContextEngineSecurityOptions] = None
+    response_judge: Optional[ResponseJudgeSecurityOptions] = None
     audit: Optional[AuditOptions] = None
 
 
@@ -266,6 +270,9 @@ GuardrailEventType = Literal[
     "conversation.risk_threshold",
     "conversation.agent_loop",
     "conversation.pii_spread",
+    "context.extracted",
+    "context.violation",
+    "response.boundary_violation",
 ]
 
 
