@@ -10,6 +10,9 @@ from .errors import (
     StreamAbortError,
     JailbreakError,
     TopicViolationError,
+    ToolGuardError,
+    ChainOfThoughtError,
+    ConversationGuardError,
 )
 from .types import (
     CustomerContext,
@@ -133,6 +136,31 @@ from ._internal.compliance import (
     INSURANCE_COMPLIANCE,
 )
 from ._internal.streaming import SecurityStream, StreamSecurityReport
+from ._internal.tool_guard import (
+    check_tool_calls,
+    detect_dangerous_args,
+    scan_tool_result,
+    ToolGuardOptions,
+    ToolGuardViolation,
+    ToolGuardCheckResult,
+    ToolCallInfo,
+    ToolResultScanReport,
+    ToolResultThreat,
+)
+from ._internal.cot_guard import (
+    scan_chain_of_thought,
+    extract_reasoning_text,
+    ChainOfThoughtGuardOptions,
+    ChainOfThoughtViolation,
+    ChainOfThoughtScanResult,
+)
+from ._internal.conversation_guard import (
+    ConversationGuard,
+    ConversationGuardOptions,
+    ConversationGuardViolation,
+    ConversationSummary,
+    RecordTurnInput,
+)
 
 # Provider adapters
 from .providers.anthropic import (
@@ -275,6 +303,31 @@ __all__ = [
     "detect_prompt_leakage",
     "PromptLeakageResult",
     "PromptLeakageOptions",
+    # Tool guard
+    "check_tool_calls",
+    "detect_dangerous_args",
+    "scan_tool_result",
+    "ToolGuardOptions",
+    "ToolGuardViolation",
+    "ToolGuardCheckResult",
+    "ToolCallInfo",
+    "ToolResultScanReport",
+    "ToolResultThreat",
+    "ToolGuardError",
+    # Chain-of-thought guard
+    "scan_chain_of_thought",
+    "extract_reasoning_text",
+    "ChainOfThoughtGuardOptions",
+    "ChainOfThoughtViolation",
+    "ChainOfThoughtScanResult",
+    "ChainOfThoughtError",
+    # Conversation guard
+    "ConversationGuard",
+    "ConversationGuardOptions",
+    "ConversationGuardViolation",
+    "ConversationSummary",
+    "RecordTurnInput",
+    "ConversationGuardError",
     # Streaming
     "SecurityStream",
     "StreamSecurityReport",

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable, List, Literal, Optional, Protocol, Sequence
+from typing import Any, Callable, List, Literal, Optional, Protocol, Sequence
 
 PIIType = Literal[
     "email",
@@ -25,6 +25,22 @@ PIIType = Literal[
     "eu_phone",
     "medicare",
     "drivers_license",
+    # Locale-specific types (enabled via locales option)
+    "ca_sin",
+    "br_cpf",
+    "br_cnpj",
+    "br_phone",
+    "cn_national_id",
+    "cn_phone",
+    "jp_my_number",
+    "jp_phone",
+    "kr_rrn",
+    "kr_phone",
+    "de_tax_id",
+    "mx_rfc",
+    "mx_curp",
+    "mx_phone",
+    "fr_nir",
 ]
 
 
@@ -40,6 +56,7 @@ class PIIDetection:
 @dataclass
 class PIIDetectOptions:
     types: Optional[List[PIIType]] = None
+    locales: Optional[Any] = None  # List[PIILocale] | 'all' — enables country-specific patterns
 
 
 class PIIDetectorProvider(Protocol):
@@ -479,7 +496,14 @@ def detect_pii(
     allowed_types = set(options.types) if options and options.types else None
     detections: List[PIIDetection] = []
 
-    for pattern in _PATTERNS:
+    # Combine base patterns with locale patterns if requested
+    all_patterns = list(_PATTERNS)
+    if options and options.locales:
+        from .pii_locales import get_locale_patterns
+        locale_patterns = get_locale_patterns(options.locales)
+        all_patterns.extend(locale_patterns)
+
+    for pattern in all_patterns:
         if allowed_types and pattern.type not in allowed_types:
             continue
 

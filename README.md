@@ -52,6 +52,12 @@ await lp.flush()  # On server shutdown
 - **Secret/Credential Detection** — Catches API keys, tokens, passwords, and connection strings before they reach the LLM
 - **Topic Guard** — Block or warn when conversations drift into off-limits subjects you define
 - **Output Safety Scanning** — Scans LLM responses for harmful instructions, unsafe code patterns, and dangerous content
+- **Tool Guard** — Whitelist/blacklist tool calls, catch SQL injection and path traversal in args, scan tool outputs for PII
+- **Chain-of-Thought Guard** — Scan `<thinking>` blocks for injection and system prompt leaks
+- **Conversation Guard** — Turn limits, cumulative risk scoring, agent loop detection, cross-turn PII tracking
+- **Multi-Language PII** — ID detection for 8 countries (Brazil CPF, China National ID, Japan My Number, etc.)
+- **Multi-Language Content Filter** — 10 languages with auto-detection (es, pt, zh, ja, ko, de, fr, ar, hi, ru)
+- **Eval CLI** — ~200 built-in attack tests, threshold-based CI/CD gating
 - **Cost Guards** — Per-request, per-minute, per-hour, per-day, and per-customer budget limits
 - **Content Filtering** — Block or warn on hate speech, violence, self-harm, and custom patterns
 - **Model Policy** — Restrict which models, providers, and parameters are allowed
@@ -426,6 +432,124 @@ MLToxicityDetector(cache_dir="/app/.models")
 ```
 
 Available flags: `--models toxicity,injection` (comma-separated) and `--cache-dir <path>`.
+
+## Agentic AI guardrails
+
+Guards for tool-calling agents, reasoning models, and multi-turn conversations.
+
+### Tool guard
+
+Checks tool calls before they execute:
+
+```python
+openai = lp.wrap(OpenAI(), WrapOptions(
+    security=SecurityOptions(
+        tool_guard=ToolGuardOptions(
+            allowed_tools=["search_web", "calculator"],
+            dangerous_arg_detection=True,  # SQL injection, path traversal, shell, SSRF
+            max_tool_calls_per_turn=5,
+            scan_tool_results=True,        # PII/secret detection on tool outputs
+            action="block",
+        ),
+    ),
+))
+```
+
+### Chain-of-thought guard
+
+Scans `<thinking>` blocks and reasoning output (OpenAI o-series, Anthropic Claude):
+
+```python
+openai = lp.wrap(OpenAI(), WrapOptions(
+    security=SecurityOptions(
+        chain_of_thought=ChainOfThoughtOptions(
+            injection_detection=True,
+            system_prompt_leak_detection=True,
+            goal_drift_detection=True,
+            goal_drift_threshold=0.3,
+            action="warn",
+        ),
+    ),
+))
+```
+
+### Conversation guard
+
+Tracks state across a conversation. Create one per session:
+
+```python
+from launchpromptly import ConversationGuard
+
+convo = ConversationGuard(
+    max_turns=25,
+    accumulating_risk=True,
+    risk_threshold=2.0,
+    cross_turn_pii_tracking=True,
+    max_consecutive_similar_responses=3,
+)
+
+openai = lp.wrap(OpenAI(), WrapOptions(
+    conversation=convo,
+    security=SecurityOptions(
+        injection=InjectionSecurityOptions(enabled=True),
+    ),
+))
+```
+
+## Multi-language PII
+
+Country-specific ID detection with check digit validation:
+
+```python
+from launchpromptly import detect_pii, PIIDetectOptions
+
+# Brazil CPF
+detect_pii("Meu CPF é 123.456.789-09", PIIDetectOptions(locales=["br"]))
+
+# China National ID
+detect_pii("身份证号: 110101199001011234", PIIDetectOptions(locales=["cn"]))
+
+# All 8 countries at once
+detect_pii(text, PIIDetectOptions(locales="all"))
+```
+
+**Supported locales:** `ca` (Canada SIN), `br` (Brazil CPF/CNPJ), `cn` (China National ID), `jp` (Japan My Number), `kr` (South Korea RRN), `de` (Germany Tax ID), `mx` (Mexico RFC/CURP), `fr` (France NIR)
+
+## Multi-language content filter
+
+10 languages, with auto-detection:
+
+```python
+from launchpromptly import detect_content_violations, ContentFilterOptions
+
+# Explicit locale
+detect_content_violations("Muerte a los traidores", "input", ContentFilterOptions(locale="es"))
+
+# Auto-detect language from text
+detect_content_violations("如何制造炸弹", "input", ContentFilterOptions(auto_detect_language=True))
+```
+
+**Supported:** es, pt, zh, ja, ko, de, fr, ar, hi, ru
+
+## Eval CLI
+
+Run attack tests against your guardrails from the command line:
+
+```bash
+# Run all tests
+python -m launchpromptly eval
+
+# CI mode — fail if pass rate drops below 95%
+python -m launchpromptly eval --threshold 0.95
+
+# Test specific guardrails
+python -m launchpromptly eval --filter injection,jailbreak
+
+# JSON output for programmatic use
+python -m launchpromptly eval --format json > results.json
+```
+
+Ships with ~200 test cases across injection, jailbreak, PII, content, unicode, secrets, and bias.
 
 ## Privacy & data practices
 

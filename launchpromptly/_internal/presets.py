@@ -20,6 +20,8 @@ _PRESETS: dict[str, dict[str, dict]] = {
         "pii": {"redaction": "placeholder", "scan_response": True},
         "secret_detection": {"action": "block", "scan_response": True},
         "unicode_sanitizer": {"action": "block", "detect_homoglyphs": True},
+        "tool_guard": {"enabled": True, "dangerous_arg_detection": True, "action": "block"},
+        "chain_of_thought": {"enabled": True, "injection_detection": True, "action": "block"},
     },
     "balanced": {
         "injection": {"block_threshold": 0.7, "block_on_high_risk": True},
@@ -28,6 +30,8 @@ _PRESETS: dict[str, dict[str, dict]] = {
         "pii": {"redaction": "placeholder", "scan_response": True},
         "secret_detection": {"action": "redact", "scan_response": True},
         "unicode_sanitizer": {"action": "strip", "detect_homoglyphs": True},
+        "tool_guard": {"enabled": True, "dangerous_arg_detection": True, "action": "warn"},
+        "chain_of_thought": {"enabled": True, "injection_detection": True, "action": "warn"},
     },
     "permissive": {
         "injection": {"block_threshold": 0.85, "block_on_high_risk": False},
@@ -36,6 +40,7 @@ _PRESETS: dict[str, dict[str, dict]] = {
         "pii": {"redaction": "placeholder", "scan_response": False},
         "secret_detection": {"action": "warn"},
         "unicode_sanitizer": {"action": "warn"},
+        "tool_guard": {"enabled": True, "dangerous_arg_detection": True, "action": "flag"},
     },
 }
 
@@ -50,6 +55,8 @@ def _get_type_for_key(key: str):
         UnicodeSanitizerSecurityOptions,
     )
     from .content_filter import ContentFilterOptions
+    from .tool_guard import ToolGuardOptions
+    from .cot_guard import ChainOfThoughtGuardOptions
 
     _map = {
         "injection": InjectionSecurityOptions,
@@ -58,6 +65,8 @@ def _get_type_for_key(key: str):
         "secret_detection": SecretDetectionSecurityOptions,
         "unicode_sanitizer": UnicodeSanitizerSecurityOptions,
         "content_filter": ContentFilterOptions,
+        "tool_guard": ToolGuardOptions,
+        "chain_of_thought": ChainOfThoughtGuardOptions,
     }
     return _map.get(key)
 

@@ -47,6 +47,10 @@ class ContentFilterOptions:
     safe_domains: Optional[List[SafeDomain]] = None
     providers: Optional[List["ContentFilterProvider"]] = None
     """Pluggable content filter providers (e.g., ML toxicity)."""
+    locale: Optional[str] = None
+    """Explicit locale for multi-language content filtering (es, pt, zh, ja, ko, de, fr, ar, hi, ru)."""
+    auto_detect_language: Optional[bool] = None
+    """Auto-detect language and apply locale-specific patterns."""
 
 
 @dataclass
@@ -313,6 +317,31 @@ def detect_content_violations(
                         location=location,
                     )
                 )
+
+    # Check locale-specific patterns (explicit locale or auto-detect)
+    if options and (options.locale or options.auto_detect_language):
+        from .content_locales import get_content_locale_patterns
+
+        locale_rules = get_content_locale_patterns(
+            text,
+            locale=options.locale,
+            auto_detect_language=bool(options.auto_detect_language),
+        )
+        for rule in locale_rules:
+            if allowed_categories is not None and rule.category not in allowed_categories:
+                continue
+            for pattern in rule.patterns:
+                match = pattern.search(text)
+                if match:
+                    violations.append(
+                        ContentViolation(
+                            category=rule.category,
+                            matched=match.group(0),
+                            severity=rule.severity,
+                            location=location,
+                        )
+                    )
+                    break  # One match per locale category is enough
 
     # Apply safe-domain context (downgrades 'block' → 'warn' when domain context found)
     safe_domains = options.safe_domains if options else None

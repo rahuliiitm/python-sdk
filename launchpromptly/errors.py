@@ -4,11 +4,14 @@ from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
     from ._internal.content_filter import ContentViolation
+    from ._internal.conversation_guard import ConversationGuardViolation
     from ._internal.cost_guard import BudgetViolation
+    from ._internal.cot_guard import ChainOfThoughtViolation
     from ._internal.injection import InjectionAnalysis
     from ._internal.jailbreak import JailbreakAnalysis
     from ._internal.model_policy import ModelPolicyViolation
     from ._internal.schema_validator import SchemaValidationError
+    from ._internal.tool_guard import ToolGuardViolation
     from ._internal.topic_guard import TopicViolation
     from .types import StreamViolation
 
@@ -96,3 +99,29 @@ class StreamAbortError(Exception):
         super().__init__(
             f"Stream aborted: {violation.type} violation detected at offset {violation.offset}"
         )
+
+
+class ToolGuardError(Exception):
+    """Raised when tool-use violations are detected."""
+
+    def __init__(self, violations: List[ToolGuardViolation]) -> None:
+        self.violations = violations
+        categories = ", ".join(sorted({v.type for v in violations}))
+        super().__init__(f"Tool guard violation: {categories}")
+
+
+class ChainOfThoughtError(Exception):
+    """Raised when chain-of-thought violations are detected."""
+
+    def __init__(self, violations: List[ChainOfThoughtViolation]) -> None:
+        self.violations = violations
+        types = ", ".join(sorted({v.type for v in violations}))
+        super().__init__(f"Chain-of-thought violation: {types}")
+
+
+class ConversationGuardError(Exception):
+    """Raised when a conversation guard violation is detected."""
+
+    def __init__(self, violation: ConversationGuardViolation) -> None:
+        self.violation = violation
+        super().__init__(f"Conversation guard violation: {violation.type} -- {violation.details}")

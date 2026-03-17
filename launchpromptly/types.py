@@ -5,7 +5,9 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, 
 
 if TYPE_CHECKING:
     from ._internal.content_filter import ContentFilterOptions
+    from ._internal.conversation_guard import ConversationGuardOptions
     from ._internal.cost_guard import CostGuardOptions
+    from ._internal.cot_guard import ChainOfThoughtGuardOptions
     from ._internal.injection import InjectionAnalysis, InjectionDetectorProvider
     from ._internal.jailbreak import JailbreakAnalysis, JailbreakDetectorProvider
     from ._internal.model_policy import ModelPolicyOptions
@@ -15,6 +17,7 @@ if TYPE_CHECKING:
     from ._internal.redaction import RedactionStrategy
     from ._internal.schema_validator import OutputSchemaOptions
     from ._internal.secret_detection import CustomSecretPattern, SecretDetection
+    from ._internal.tool_guard import ToolGuardOptions
     from ._internal.topic_guard import TopicDefinition, TopicViolation
     from ._internal.unicode_sanitizer import UnicodeScanResult
 
@@ -227,6 +230,8 @@ class SecurityOptions:
     output_safety: Optional[OutputSafetySecurityOptions] = None
     prompt_leakage: Optional[PromptLeakageSecurityOptions] = None
     hallucination: Optional[HallucinationSecurityOptions] = None
+    tool_guard: Optional[ToolGuardOptions] = None
+    chain_of_thought: Optional[ChainOfThoughtGuardOptions] = None
     audit: Optional[AuditOptions] = None
 
 
@@ -251,6 +256,16 @@ GuardrailEventType = Literal[
     "topic.violated",
     "output.unsafe",
     "prompt.leaked",
+    "tool.blocked",
+    "tool.violation",
+    "cot.injection",
+    "cot.system_leak",
+    "cot.goal_drift",
+    "conversation.max_turns",
+    "conversation.topic_drift",
+    "conversation.risk_threshold",
+    "conversation.agent_loop",
+    "conversation.pii_spread",
 ]
 
 
