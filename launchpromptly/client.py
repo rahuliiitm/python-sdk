@@ -41,7 +41,7 @@ from ._internal.content_filter import detect_content_violations, has_blocking_vi
 from ._internal.model_policy import check_model_policy
 from ._internal.streaming import SecurityStream, StreamGuardEngine, StreamSecurityReport
 from ._internal.event_types import StreamGuardEventPayload, ContextEnginePayload, ResponseJudgePayload
-from ._internal.context_engine import extract_context, ContextProfile
+from ._internal.context_engine import extract_context, extract_context_with_providers, ContextProfile
 from ._internal.response_judge import judge_response, merge_judgments, ResponseJudgment
 
 _DEFAULT_ENDPOINT = "https://api.launchpromptly.dev"
@@ -561,10 +561,13 @@ class _WrappedCompletions:
                 from ._internal.context_engine import ContextEngineOptions
                 prompt = security.context_engine.system_prompt or system_prompt_text
                 if prompt:
-                    context_profile = extract_context(
-                        prompt,
-                        ContextEngineOptions(cache=security.context_engine.cache_profiles is not False),
-                    )
+                    cache_opts = ContextEngineOptions(cache=security.context_engine.cache_profiles is not False)
+                    if security.context_engine.providers:
+                        context_profile = extract_context_with_providers(
+                            prompt, security.context_engine.providers, cache_opts,
+                        )
+                    else:
+                        context_profile = extract_context(prompt, cache_opts)
                     self._lp._emit("context.extracted", {"profile": context_profile})
 
             # 3. Injection detection

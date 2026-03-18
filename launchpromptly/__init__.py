@@ -138,6 +138,7 @@ from ._internal.compliance import (
 )
 from ._internal.context_engine import (
     extract_context,
+    extract_context_with_providers,
     clear_context_cache,
     ContextProfile,
     Constraint,
@@ -363,6 +364,7 @@ __all__ = [
     "ChainOfThoughtError",
     # Context engine
     "extract_context",
+    "extract_context_with_providers",
     "clear_context_cache",
     "ContextProfile",
     "Constraint",

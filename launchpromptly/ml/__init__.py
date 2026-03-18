@@ -137,6 +137,22 @@ except ImportError as exc:
 
 
 try:
+    from .context_extractor import MLContextExtractor
+except ImportError as exc:
+    _import_errors["MLContextExtractor"] = str(exc)
+
+    class MLContextExtractor:  # type: ignore[no-redef]
+        """Placeholder that raises when ONNX deps are missing."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "MLContextExtractor requires onnxruntime and tokenizers. "
+                f"Install with: pip install launchpromptly[ml-onnx]\n"
+                f"Original error: {_import_errors['MLContextExtractor']}"
+            )
+
+
+try:
     from .attack_embeddings import load_attack_index, match_against_index, has_attack_match
 except ImportError:
     pass
@@ -159,6 +175,7 @@ __all__ = [
     "MLHallucinationDetector",
     "MLEmbeddingProvider",
     "MLResponseJudge",
+    "MLContextExtractor",
     "load_attack_index",
     "match_against_index",
     "has_attack_match",

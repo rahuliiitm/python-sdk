@@ -461,3 +461,95 @@ def extract_context(
         _profile_cache[prompt_hash] = profile
 
     return profile
+
+
+def extract_context_with_providers(
+    system_prompt: str,
+    providers: List["ContextExtractorProvider"],
+    options: Optional[ContextEngineOptions] = None,
+) -> ContextProfile:
+    """Extract context using regex baseline + optional ML providers.
+
+    Runs ``extract_context()`` for the regex baseline, then calls each
+    provider's ``extract()`` synchronously. Results are merged: regex findings
+    are preferred for explicitly matched patterns, ML findings fill gaps.
+    """
+    regex_profile = extract_context(system_prompt, options)
+    if not providers:
+        return regex_profile
+
+    ml_profiles = [p.extract(system_prompt) for p in providers]
+    return _merge_profiles(regex_profile, ml_profiles)
+
+
+def _merge_profiles(
+    regex_profile: ContextProfile,
+    ml_profiles: List[ContextProfile],
+) -> ContextProfile:
+    """Merge regex profile with ML provider profiles.
+
+    Strategy:
+    - Role/entity/output_format/grounding_mode: prefer regex, ML fallback
+    - Topics/actions: union (deduplicated)
+    - Constraints: merge all, dedup by source+type, keep higher confidence
+    """
+    # Start from copies of regex lists
+    role = regex_profile.role
+    entity = regex_profile.entity
+    output_format = regex_profile.output_format
+    grounding_mode = regex_profile.grounding_mode
+    allowed_topics = list(regex_profile.allowed_topics)
+    restricted_topics = list(regex_profile.restricted_topics)
+    forbidden_actions = list(regex_profile.forbidden_actions)
+    constraints = list(regex_profile.constraints)
+
+    for ml in ml_profiles:
+        # Scalars: regex wins if present, otherwise take ML
+        if not role and ml.role:
+            role = ml.role
+        if not entity and ml.entity:
+            entity = ml.entity
+        if not output_format and ml.output_format:
+            output_format = ml.output_format
+        if grounding_mode == "any" and ml.grounding_mode != "any":
+            grounding_mode = ml.grounding_mode
+
+        # Topics: union with deduplication
+        for topic in ml.allowed_topics:
+            if topic not in allowed_topics:
+                allowed_topics.append(topic)
+        for topic in ml.restricted_topics:
+            if topic not in restricted_topics:
+                restricted_topics.append(topic)
+
+        # Forbidden actions: union
+        for action in ml.forbidden_actions:
+            if action not in forbidden_actions:
+                forbidden_actions.append(action)
+
+        # Constraints: merge by source+type, keep higher confidence
+        for ml_c in ml.constraints:
+            existing = next(
+                (c for c in constraints if c.type == ml_c.type and c.source == ml_c.source),
+                None,
+            )
+            if existing:
+                if ml_c.confidence > existing.confidence:
+                    existing.confidence = ml_c.confidence
+                    existing.description = ml_c.description
+                    existing.keywords = ml_c.keywords
+            else:
+                constraints.append(ml_c)
+
+    return ContextProfile(
+        role=role,
+        entity=entity,
+        allowed_topics=allowed_topics,
+        restricted_topics=restricted_topics,
+        forbidden_actions=forbidden_actions,
+        output_format=output_format,
+        grounding_mode=grounding_mode,
+        constraints=constraints,
+        raw_system_prompt=regex_profile.raw_system_prompt,
+        prompt_hash=regex_profile.prompt_hash,
+    )

@@ -15,9 +15,10 @@ _GUARDRAIL_ALIASES: dict[str, str] = {
     "content_filter": "toxicity",  # alias
     "hallucination": "hallucination",
     "nli_judge": "nli_judge",
+    "context_engine": "context_engine",
 }
 
-_ALL_ML_GUARDRAILS = ["injection", "jailbreak", "pii", "toxicity", "hallucination", "nli_judge"]
+_ALL_ML_GUARDRAILS = ["injection", "jailbreak", "pii", "toxicity", "hallucination", "nli_judge", "context_engine"]
 
 
 def resolve_guardrail_list(use_ml: Union[bool, List[str]]) -> list[str]:
@@ -85,6 +86,11 @@ def create_ml_providers(use_ml: Union[bool, List[str]]) -> dict[str, Any]:
 
         result["nli_judge"] = MLResponseJudge.create()
 
+    if "context_engine" in guardrails:
+        from ..ml import MLContextExtractor
+
+        result["context_engine"] = MLContextExtractor.create()
+
     return result
 
 
@@ -138,6 +144,13 @@ def merge_ml_providers(security: Any, ml_providers: dict[str, Any]) -> Any:
         existing = security.response_judge or ResponseJudgeSecurityOptions()
         providers = list(existing.providers or []) + [ml_providers["nli_judge"]]
         changes["response_judge"] = dc_replace(existing, providers=providers)
+
+    if "context_engine" in ml_providers:
+        from .context_engine import ContextEngineSecurityOptions
+
+        existing = security.context_engine or ContextEngineSecurityOptions()
+        providers = list(existing.providers or []) + [ml_providers["context_engine"]]
+        changes["context_engine"] = dc_replace(existing, providers=providers)
 
     if changes:
         return dc_replace(security, **changes)
