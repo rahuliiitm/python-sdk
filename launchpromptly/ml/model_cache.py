@@ -97,6 +97,15 @@ _MODEL_REGISTRY: dict[str, dict] = {
             "config.json",
         ],
     },
+    "launchpromptly/attack-classifier-v1": {
+        "onnx_file": "onnx/model.onnx",
+        "quantized_file": "onnx/model_quantized.onnx",
+        "files": [
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "config.json",
+        ],
+    },
 }
 
 MODEL_NAME_MAP: dict[str, str] = {
@@ -106,6 +115,7 @@ MODEL_NAME_MAP: dict[str, str] = {
     "ner": "Xenova/bert-base-NER",
     "embedding": "Xenova/all-MiniLM-L6-v2",
     "nli": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "attack-classifier": "launchpromptly/attack-classifier-v1",
 }
 
 
