@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
+import torch
 from datasets import Dataset
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 from sklearn.model_selection import train_test_split
@@ -51,9 +53,9 @@ def main():
         type=str,
         default=str(Path(__file__).resolve().parent / "training_data.json"),
     )
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--epochs", type=int, default=25)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--lr", type=float, default=3e-5)
     parser.add_argument(
         "--output",
         type=str,
@@ -99,6 +101,26 @@ def main():
         tokenize, batched=True
     )
 
+    # Compute class weights to handle imbalance (175 safe vs ~30 per attack)
+    label_counts = Counter(train_labels)
+    total = len(train_labels)
+    num_classes = len(label2id)
+    class_weights = torch.tensor(
+        [total / (num_classes * label_counts.get(i, 1)) for i in range(num_classes)],
+        dtype=torch.float32,
+    )
+    print(f"\n  Class weights: {dict(zip([id2label[i] for i in range(num_classes)], class_weights.tolist()))}")
+
+    # Custom Trainer with weighted loss
+    class WeightedTrainer(Trainer):
+        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+            labels = inputs.pop("labels")
+            outputs = model(**inputs)
+            logits = outputs.logits
+            loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights.to(logits.device))
+            loss = loss_fn(logits, labels)
+            return (loss, outputs) if return_outputs else loss
+
     # Metrics
     def compute_metrics(pred):
         preds = pred.predictions.argmax(-1)
@@ -130,14 +152,14 @@ def main():
         report_to="none",
     )
 
-    trainer = Trainer(
+    trainer = WeightedTrainer(
         model=model,
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         tokenizer=tokenizer,
         compute_metrics=compute_metrics,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=5)],
     )
 
     print("\nTraining...")
