@@ -75,7 +75,8 @@ class TestEntityExtraction:
 class TestAllowedTopics:
     def test_only_discuss(self):
         profile = extract_context("Only discuss cooking and recipes.")
-        assert "cooking and recipes" in profile.allowed_topics
+        assert "cooking" in profile.allowed_topics
+        assert "recipes" in profile.allowed_topics
 
     def test_limit_yourself(self):
         profile = extract_context("Limit your responses to programming topics.")
@@ -91,7 +92,8 @@ class TestAllowedTopics:
 
     def test_focus_on(self):
         profile = extract_context("Focus exclusively on data science and machine learning.")
-        assert "data science and machine learning" in profile.allowed_topics
+        assert "data science" in profile.allowed_topics
+        assert "machine learning" in profile.allowed_topics
 
     def test_topic_boundary_constraints(self):
         profile = extract_context("Only discuss cooking and recipes.")
@@ -99,9 +101,10 @@ class TestAllowedTopics:
             c for c in profile.constraints
             if c.type == "topic_boundary" and c.description.startswith("Allowed")
         ]
-        assert len(topic_constraints) >= 1
-        assert "cooking" in topic_constraints[0].keywords
-        assert "recipes" in topic_constraints[0].keywords
+        assert len(topic_constraints) >= 2
+        all_keywords = [kw for c in topic_constraints for kw in c.keywords]
+        assert "cooking" in all_keywords
+        assert "recipes" in all_keywords
 
     def test_no_allowed_topics(self):
         profile = extract_context("You are a helpful assistant.")
@@ -114,7 +117,8 @@ class TestAllowedTopics:
 class TestRestrictedTopics:
     def test_never_discuss(self):
         profile = extract_context("Never discuss politics or religion.")
-        assert "politics or religion" in profile.restricted_topics
+        assert "politics" in profile.restricted_topics
+        assert "religion" in profile.restricted_topics
 
     def test_do_not_provide_advice_on(self):
         profile = extract_context("Do not provide advice on medical treatments.")
@@ -134,7 +138,7 @@ class TestRestrictedTopics:
             c for c in profile.constraints
             if c.type == "topic_boundary" and c.description.startswith("Restricted")
         ]
-        assert len(topic_constraints) >= 1
+        assert len(topic_constraints) >= 2
 
 
 # ── Forbidden Actions ────────────────────────────────────────────────────────

@@ -195,6 +195,24 @@ _PERSONA_PATTERNS = [
     re.compile(r"your\s+tone\s+(?:should|must)\s+be\s+(professional|friendly|polite|formal|casual|concise|brief|helpful|empathetic|neutral|objective|respectful|warm|enthusiastic)", re.I),
 ]
 
+# ── Compound Constraint Splitting ──────────────────────────────────────────
+
+_COMPOUND_DELIMITER_RE = re.compile(r",\s+(?:and|or)\s+|;\s+(?:and|or)\s+|;\s+|,\s+|\s+(?:and|or)\s+", re.I)
+
+
+def _split_compound_items(text: str) -> List[str]:
+    """Split compound constraints like 'politics, religion, or adult content'
+    into individual items: ['politics', 'religion', 'adult content'].
+    """
+    items = _COMPOUND_DELIMITER_RE.split(text)
+    return [s.strip() for s in items if s.strip()]
+
+
+def _is_compound_text(text: str) -> bool:
+    """Check if text contains list delimiters indicating multiple items."""
+    return bool(re.search(r",\s+|\s+(?:and|or)\s+|;\s+", text, re.I))
+
+
 # ── Extraction Functions ────────────────────────────────────────────────────
 
 
@@ -224,18 +242,22 @@ def _extract_allowed_topics(
         for pattern in _ALLOWED_TOPIC_PATTERNS:
             m = pattern.search(sentence)
             if m and m.group(1):
-                topic = m.group(1).strip().lower()
-                if topic not in topics:
-                    topics.append(topic)
-                constraints.append(
-                    Constraint(
-                        type="topic_boundary",
-                        description=f"Allowed topic: {topic}",
-                        keywords=_extract_keywords(topic),
-                        source=sentence,
-                        confidence=0.8,
+                raw_text = m.group(1).strip()
+                items = _split_compound_items(raw_text) if _is_compound_text(raw_text) else [raw_text.lower()]
+
+                for item in items:
+                    item = item.lower()
+                    if item not in topics:
+                        topics.append(item)
+                    constraints.append(
+                        Constraint(
+                            type="topic_boundary",
+                            description=f"Allowed topic: {item}",
+                            keywords=_extract_keywords(item),
+                            source=sentence,
+                            confidence=0.8,
+                        )
                     )
-                )
     return topics, constraints
 
 
@@ -248,18 +270,22 @@ def _extract_restricted_topics(
         for pattern in _RESTRICTED_TOPIC_PATTERNS:
             m = pattern.search(sentence)
             if m and m.group(1):
-                topic = m.group(1).strip().lower()
-                if topic not in topics:
-                    topics.append(topic)
-                constraints.append(
-                    Constraint(
-                        type="topic_boundary",
-                        description=f"Restricted topic: {topic}",
-                        keywords=_extract_keywords(topic),
-                        source=sentence,
-                        confidence=0.8,
+                raw_text = m.group(1).strip()
+                items = _split_compound_items(raw_text) if _is_compound_text(raw_text) else [raw_text.lower()]
+
+                for item in items:
+                    item = item.lower()
+                    if item not in topics:
+                        topics.append(item)
+                    constraints.append(
+                        Constraint(
+                            type="topic_boundary",
+                            description=f"Restricted topic: {item}",
+                            keywords=_extract_keywords(item),
+                            source=sentence,
+                            confidence=0.8,
+                        )
                     )
-                )
     return topics, constraints
 
 
@@ -278,20 +304,24 @@ def _extract_forbidden_actions(
         for pattern in _FORBIDDEN_ACTION_PATTERNS:
             m = pattern.search(sentence)
             if m and m.group(1):
-                action = m.group(1).strip().lower()
-                if len(action) < 5:
-                    continue
-                if action not in actions:
-                    actions.append(action)
-                constraints.append(
-                    Constraint(
-                        type="action_restriction",
-                        description=f"Forbidden: {action}",
-                        keywords=_extract_keywords(action),
-                        source=sentence,
-                        confidence=0.75,
+                raw_text = m.group(1).strip()
+                items = _split_compound_items(raw_text) if _is_compound_text(raw_text) else [raw_text.lower()]
+
+                for item in items:
+                    item = item.lower()
+                    if len(item) < 5:
+                        continue
+                    if item not in actions:
+                        actions.append(item)
+                    constraints.append(
+                        Constraint(
+                            type="action_restriction",
+                            description=f"Forbidden: {item}",
+                            keywords=_extract_keywords(item),
+                            source=sentence,
+                            confidence=0.75,
+                        )
                     )
-                )
     return actions, constraints
 
 
@@ -362,6 +392,107 @@ def _extract_persona_rules(sentences: List[str]) -> List[Constraint]:
                     )
                 )
     return constraints
+
+
+# ── Conflict Detection ────────────────────────────────────────────────────────
+
+
+@dataclass
+class ConstraintConflict:
+    constraint_a: Constraint
+    constraint_b: Constraint
+    conflict_type: Literal["contradiction", "ambiguity", "redundancy"]
+    description: str
+
+
+_CONTRADICTORY_PERSONA_PAIRS: List[Tuple[str, str]] = [
+    ("formal", "casual"),
+    ("professional", "casual"),
+    ("concise", "detailed"),
+    ("brief", "detailed"),
+    ("neutral", "enthusiastic"),
+    ("objective", "empathetic"),
+]
+
+_EXPANSIVE_ROLE_INDICATORS = ["general", "any", "all", "everything", "anything", "universal"]
+
+
+def detect_conflicts(profile: ContextProfile) -> List[ConstraintConflict]:
+    """Detect logical conflicts between extracted constraints.
+
+    Checks:
+    - Allowed topic keywords that overlap with restricted topic keywords (contradiction)
+    - Expansive role definitions alongside restrictive constraints (ambiguity)
+    - Contradictory persona traits (contradiction)
+    """
+    conflicts: List[ConstraintConflict] = []
+
+    allowed_constraints = [
+        c for c in profile.constraints
+        if c.type == "topic_boundary" and c.description.startswith("Allowed")
+    ]
+    restricted_constraints = [
+        c for c in profile.constraints
+        if c.type == "topic_boundary" and c.description.startswith("Restricted")
+    ]
+    persona_constraints = [c for c in profile.constraints if c.type == "persona_rule"]
+    role_constraint = next((c for c in profile.constraints if c.type == "role_constraint"), None)
+
+    # 1. Allowed vs restricted topic keyword overlap
+    for allowed in allowed_constraints:
+        for restricted in restricted_constraints:
+            overlap = [k for k in allowed.keywords if k in restricted.keywords]
+            if overlap:
+                conflicts.append(ConstraintConflict(
+                    constraint_a=allowed,
+                    constraint_b=restricted,
+                    conflict_type="contradiction",
+                    description=(
+                        f'Allowed topic "{allowed.description}" overlaps with restricted topic '
+                        f'"{restricted.description}" on keywords: {", ".join(overlap)}'
+                    ),
+                ))
+
+    # 2. Expansive role vs restrictive constraints
+    if role_constraint and (restricted_constraints or profile.forbidden_actions):
+        role_text = role_constraint.description.lower()
+        is_expansive = any(ind in role_text for ind in _EXPANSIVE_ROLE_INDICATORS)
+        if is_expansive:
+            restrictive = restricted_constraints[0] if restricted_constraints else next(
+                (c for c in profile.constraints if c.type == "action_restriction"), None
+            )
+            if restrictive:
+                conflicts.append(ConstraintConflict(
+                    constraint_a=role_constraint,
+                    constraint_b=restrictive,
+                    conflict_type="ambiguity",
+                    description=(
+                        f'Expansive role "{role_constraint.description}" may conflict with '
+                        f'restrictive constraint "{restrictive.description}"'
+                    ),
+                ))
+
+    # 3. Contradictory persona traits
+    for i in range(len(persona_constraints)):
+        for j in range(i + 1, len(persona_constraints)):
+            trait_a = persona_constraints[i].keywords[0].lower() if persona_constraints[i].keywords else ""
+            trait_b = persona_constraints[j].keywords[0].lower() if persona_constraints[j].keywords else ""
+            if not trait_a or not trait_b:
+                continue
+
+            is_contradictory = any(
+                (trait_a == a and trait_b == b) or (trait_a == b and trait_b == a)
+                for a, b in _CONTRADICTORY_PERSONA_PAIRS
+            )
+            if is_contradictory:
+                conflicts.append(ConstraintConflict(
+                    constraint_a=persona_constraints[i],
+                    constraint_b=persona_constraints[j],
+                    conflict_type="contradiction",
+                    description=f'Persona trait "{trait_a}" contradicts "{trait_b}"',
+                ))
+
+    return conflicts
 
 
 # ── Public API ───────────────────────────────────────────────────────────────

@@ -16,6 +16,8 @@ from .attacks import get_built_in_attacks, inject_system_prompt, BUILT_IN_ATTACK
 from .analyzer import analyze_attack_result, AnalysisInput, AnalysisResult
 from .reporter import generate_report
 from .runner import run_red_team
+from .contextual_attacks import generate_contextual_attacks
+from .regression import create_baseline, compare_reports, RedTeamBaseline, RegressionReport, CategoryRegression
 
 __all__ = [
     "AttackCategory",
@@ -36,4 +38,10 @@ __all__ = [
     "AnalysisResult",
     "generate_report",
     "run_red_team",
+    "generate_contextual_attacks",
+    "create_baseline",
+    "compare_reports",
+    "RedTeamBaseline",
+    "RegressionReport",
+    "CategoryRegression",
 ]

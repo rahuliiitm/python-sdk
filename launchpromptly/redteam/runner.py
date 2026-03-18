@@ -17,6 +17,8 @@ from .types import (
 from .attacks import get_built_in_attacks, inject_system_prompt
 from .analyzer import analyze_attack_result, AnalysisInput
 from .reporter import generate_report
+from .contextual_attacks import generate_contextual_attacks
+from .._internal.context_engine import extract_context
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -119,6 +121,12 @@ async def run_red_team(
         *get_built_in_attacks(opts.categories),
         *(opts.custom_attacks or []),
     ]
+
+    # 1b. Generate contextual attacks from system prompt
+    if opts.contextual_attacks is not False and opts.system_prompt:
+        profile = extract_context(opts.system_prompt)
+        contextual = generate_contextual_attacks(profile)
+        attacks.extend(contextual)
 
     # 2. Inject system prompt
     if opts.system_prompt:

@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional, Protocol
+from typing import Any, List, Literal, Optional, Protocol
 
 InjectionAction = Literal["allow", "warn", "block"]
 
@@ -30,6 +30,7 @@ class InjectionOptions:
     block_threshold: Optional[float] = None  # default: 0.7
     system_prompt: Optional[str] = None  # system prompt for role suppression
     merge_strategy: Optional[MergeStrategy] = None  # default: 'max'
+    context_profile: Optional[Any] = None  # L3 ContextProfile for context-aware adjustment
 
 
 class InjectionDetectorProvider(Protocol):
@@ -298,6 +299,72 @@ def _is_consistent_with_system(
     return False
 
 
+# -- Context-aware adjustment --------------------------------------------------
+
+_DIRECTIVE_PATTERNS = [
+    re.compile(
+        r"\b(?:discuss|talk\s+about|tell\s+me\s+about|explain|help\s+(?:me\s+)?with|switch\s+to|let'?s\s+(?:talk|discuss|move\s+on\s+to))\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:ignore|forget|disregard|override|change|update)\s+(?:your|the|that|those)\b",
+        re.IGNORECASE,
+    ),
+]
+
+
+def _adjust_with_context(
+    score: float,
+    triggered: List[str],
+    text: str,
+    profile: Any,
+) -> tuple:
+    """Adjust injection score based on L3 context profile.
+
+    - Suppress: If user mentions a role consistent with the system prompt role, reduce score.
+    - Boost: If user tries to discuss restricted topics in a directive context.
+    - Boost: If user tries to instruct actions that contradict forbidden actions.
+
+    Returns (adjusted_score, adjusted_triggered).
+    """
+    lower_text = text.lower()
+    adjusted_score = score
+    adjusted_triggered = list(triggered)
+
+    # Suppress: role_manipulation when user mentions system prompt's own role
+    if "role_manipulation" in triggered and profile.role:
+        role_words = [w for w in profile.role.lower().split() if len(w) > 2]
+        if role_words:
+            match_count = sum(1 for w in role_words if w in lower_text)
+            if match_count / len(role_words) >= 0.5:
+                adjusted_score = max(0, adjusted_score - 0.3)
+
+    # Boost: user tries to discuss restricted topics in a directive way
+    is_directive = any(p.search(text) for p in _DIRECTIVE_PATTERNS)
+    if is_directive:
+        for topic in profile.restricted_topics:
+            topic_words = [w for w in topic.split() if len(w) > 2]
+            if topic_words and any(w in lower_text for w in topic_words):
+                adjusted_score = min(1.0, adjusted_score + 0.15)
+                if "context_override" not in adjusted_triggered:
+                    adjusted_triggered.append("context_override")
+                break
+
+    # Boost: user tries to instruct the model to do a forbidden action
+    for action in profile.forbidden_actions:
+        action_words = [w for w in action.split() if len(w) > 2]
+        if not action_words:
+            continue
+        match_count = sum(1 for w in action_words if w in lower_text)
+        if match_count / len(action_words) >= 0.5 and is_directive:
+            adjusted_score = min(1.0, adjusted_score + 0.2)
+            if "constraint_override" not in adjusted_triggered:
+                adjusted_triggered.append("constraint_override")
+            break
+
+    return adjusted_score, adjusted_triggered
+
+
 # -- Detection -----------------------------------------------------------------
 
 _MAX_INJECTION_SCAN_LENGTH = 500_000  # 500KB
@@ -363,6 +430,12 @@ def detect_injection(
 
     # Cap at 1.0
     risk_score = min(total_score, 1.0)
+
+    # Apply context-aware adjustment if L3 profile is available
+    if options and options.context_profile:
+        risk_score, triggered = _adjust_with_context(
+            risk_score, triggered, scan_text, options.context_profile,
+        )
 
     # Round to 2 decimal places for clean output
     rounded_score = round(risk_score * 100) / 100

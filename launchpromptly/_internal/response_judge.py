@@ -441,6 +441,73 @@ def _check_persona_breaks(
     return violations
 
 
+def _check_role_deviation(
+    tokens: list[str], lower_text: str, profile: ContextProfile
+) -> list[BoundaryViolation]:
+    if not profile.role:
+        return []
+
+    violations: list[BoundaryViolation] = []
+    role_constraint = next(
+        (c for c in profile.constraints if c.type == "role_constraint"), None
+    )
+    if not role_constraint:
+        return []
+
+    role_keywords = role_constraint.keywords
+
+    # Check 1: Response claims a different identity
+    _IDENTITY_PATTERNS = [
+        re.compile(r"i am (?:a|an|the)\s+(\w[\w\s]{2,30})", re.I),
+        re.compile(r"as (?:a|an|the)\s+(\w[\w\s]{2,30})", re.I),
+        re.compile(r"my role is\s+(\w[\w\s]{2,30})", re.I),
+    ]
+
+    for pattern in _IDENTITY_PATTERNS:
+        m = pattern.search(lower_text)
+        if m and m.group(1):
+            claimed_role = m.group(1).strip().lower()
+            claimed_tokens = [t for t in claimed_role.split() if len(t) > 2]
+            has_overlap = any(t in role_keywords for t in claimed_tokens)
+            if not has_overlap and claimed_tokens:
+                violations.append(
+                    BoundaryViolation(
+                        type="role_deviation",
+                        constraint=role_constraint,
+                        confidence=0.8,
+                        evidence=_extract_evidence(lower_text, m.group(0)),
+                    )
+                )
+                break  # One identity deviation is enough
+
+    # Check 2: Response explicitly breaks character (only for non-generic roles)
+    _GENERIC_ROLES = ["assistant", "helper", "bot", "chatbot", "model", "language model"]
+    is_generic_role = any(g in profile.role for g in _GENERIC_ROLES)
+
+    if not is_generic_role:
+        _BREAK_PATTERNS = [
+            re.compile(r"as an ai(?:\s+(?:language\s+)?model)?", re.I),
+            re.compile(r"as a language model", re.I),
+            re.compile(r"i(?:'m|'m| am) just an ai", re.I),
+            re.compile(r"i don'?t actually have", re.I),
+            re.compile(r"i(?:'m|'m| am) not really a", re.I),
+        ]
+        for pattern in _BREAK_PATTERNS:
+            m = pattern.search(lower_text)
+            if m:
+                violations.append(
+                    BoundaryViolation(
+                        type="role_deviation",
+                        constraint=role_constraint,
+                        confidence=0.75,
+                        evidence=_extract_evidence(lower_text, m.group(0)),
+                    )
+                )
+                break
+
+    return violations
+
+
 # ── Scoring ──────────────────────────────────────────────────────────────────
 
 
@@ -521,10 +588,13 @@ def judge_response(
     # 1. Topic violations
     violations.extend(_check_topic_violations(tokens, lower_text, profile))
 
-    # 2. Forbidden actions
+    # 2. Role deviation
+    violations.extend(_check_role_deviation(tokens, lower_text, profile))
+
+    # 3. Forbidden actions
     violations.extend(_check_forbidden_actions(lower_text, profile))
 
-    # 3. Format compliance
+    # 4. Format compliance
     violations.extend(_check_format_compliance(response_text, profile))
 
     # 4. Grounding violations

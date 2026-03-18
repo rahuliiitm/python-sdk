@@ -277,6 +277,15 @@ class LaunchPromptly:
         except Exception:
             pass  # Fire-and-forget — feedback is non-critical
 
+    def audit_prompt(self, system_prompt: str) -> Any:
+        """Audit a system prompt for security weaknesses, conflicts, and attack surface.
+
+        Returns a PromptAuditReport with robustness score (0-100) and actionable suggestions.
+        Fully local — no LLM call needed.
+        """
+        from ._internal.prompt_audit import audit_prompt as _audit
+        return _audit(system_prompt)
+
     async def red_team(
         self,
         wrapped_client: Any,
@@ -583,6 +592,12 @@ class _WrappedCompletions:
                         block_threshold=inj_opts.block_threshold or 0.7,
                         system_prompt=system_prompt_text,
                         merge_strategy=inj_opts.merge_strategy,
+                        context_profile=(
+                            context_profile
+                            if security.context_engine
+                            and security.context_engine.enhance_injection is not False
+                            else None
+                        ),
                     )
                     injection_result = detect_injection(user_text, inj_detect_opts)
 

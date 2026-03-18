@@ -87,6 +87,7 @@ class RedTeamOptions:
     on_progress: Optional[Callable[[RedTeamProgress], None]] = None
     model: Optional[str] = None
     dry_run: bool = False
+    contextual_attacks: Optional[bool] = None  # Default: True if system_prompt provided
 
 
 # ── Report ───────────────────────────────────────────────────────────────────

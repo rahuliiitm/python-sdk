@@ -140,9 +140,11 @@ from ._internal.context_engine import (
     extract_context,
     extract_context_with_providers,
     clear_context_cache,
+    detect_conflicts,
     ContextProfile,
     Constraint,
     ConstraintType,
+    ConstraintConflict,
     GroundingMode,
     ContextEngineOptions,
     ContextExtractorProvider,
@@ -160,6 +162,15 @@ from ._internal.response_judge import (
 )
 from ._internal.streaming import SecurityStream, StreamSecurityReport
 
+# Prompt audit
+from ._internal.prompt_audit import (
+    audit_prompt,
+    PromptAuditReport,
+    PromptWeakness,
+    AttackSurfaceEntry,
+    PromptSuggestion,
+)
+
 # Red team engine
 from .redteam import (
     get_built_in_attacks,
@@ -167,6 +178,9 @@ from .redteam import (
     BUILT_IN_ATTACKS,
     analyze_attack_result,
     generate_report,
+    generate_contextual_attacks,
+    create_baseline,
+    compare_reports,
     AttackCategory,
     AttackPayload,
     AttackOutcome,
@@ -176,6 +190,9 @@ from .redteam import (
     RedTeamReport,
     CategoryScore,
     Vulnerability,
+    RedTeamBaseline,
+    RegressionReport,
+    CategoryRegression,
 )
 from ._internal.tool_guard import (
     check_tool_calls,
